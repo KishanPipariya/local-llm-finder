@@ -9,8 +9,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "tsx --test tests/recommendations.test.ts",
-    "test:a11y": "tsx tests/accessibility.test.ts",
+    "test": "tsx --test --test-concurrency=4 tests/recommendations.test.ts",
+    "test:a11y": "tsx --test --test-concurrency=4 tests/accessibility.test.ts",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
   },
   "dependencies": {
