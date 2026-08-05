@@ -1,7 +1,7 @@
 import { Artifact, rankArtifacts, validateConfig } from "@/lib/recommendations";
 import { cachedCatalogue } from "@/lib/catalogue-cache";
 
-export const runtime = "edge";
+export const runtime = "nodejs";
 const MAX_AGE = 6 * 60 * 60 * 1000;
 let catalogue: { items: Artifact[]; refreshedAt: string } | undefined;
 
