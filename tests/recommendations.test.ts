@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { estimateMemoryGb, rankArtifacts, runtimeEligibility, validateConfig, type Artifact, type MacConfig } from "../lib/recommendations.ts";
-import { cachedCatalogue } from "../lib/catalogue-cache.ts";
+import { estimateMemoryGb, rankArtifacts, runtimeEligibility, validateConfig, type Artifact, type MacConfig } from "../lib/recommendations";
+import { cachedCatalogue } from "../lib/catalogue-cache";
 
 const mac: MacConfig = { architecture: "apple", chipTier: "base", memoryGb: 16, diskGb: 12, macosMajor: 15, workload: "coding" };
 const gguf: Artifact = { id: "org/Coder-7B-GGUF", modelId: "org/Coder-7B-GGUF", title: "Coder 7B", format: "gguf", sizeGb: 5, paramsB: 7, downloads: 3000, updatedAt: "2026-08-01T00:00:00Z", gated: false, tags: ["code"], sourceUrl: "https://huggingface.co/org/Coder-7B-GGUF" };
