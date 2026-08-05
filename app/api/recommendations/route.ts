@@ -18,7 +18,7 @@ function preferredGguf(files: { rfilename: string; size?: number }[]) {
   return (quantized.length ? quantized : files).sort((a, b) => (a.size ?? 0) - (b.size ?? 0))[0];
 }
 
-export function normalize(models: HubModel[], format: Artifact["format"]): Artifact[] {
+function normalize(models: HubModel[], format: Artifact["format"]): Artifact[] {
   return models.flatMap((model) => {
     const files = model.siblings ?? [];
     const matched = format === "gguf" ? files.filter((f) => /\.gguf$/i.test(f.rfilename)) : files.filter((f) => /config\.json$|\.safetensors$/i.test(f.rfilename));
