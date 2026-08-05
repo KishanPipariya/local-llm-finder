@@ -10,6 +10,7 @@
     "build": "next build",
     "start": "next start",
     "test": "tsx --test tests/recommendations.test.ts",
+    "test:a11y": "tsx tests/accessibility.test.ts",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
   },
   "dependencies": {
@@ -19,6 +20,7 @@
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@cloudflare/vite-plugin": "1.37.1",
     "@tailwindcss/postcss": "4.3.3",
     "@types/node": "22.19.19",
@@ -28,6 +30,7 @@
     "@vitejs/plugin-rsc": "0.5.26",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.6",
+    "playwright": "^1.62.1",
     "react-server-dom-webpack": "19.2.6",
     "tailwindcss": "4.3.3",
     "tsx": "^4.22.1",

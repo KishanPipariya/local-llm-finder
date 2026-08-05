@@ -16,6 +16,15 @@ test("accepts every chip's supported memory options and rejects impossible pairs
   assert.equal(validateConfig({ ...mac, chip: { family: "m4" }, memoryGb: 16 }).valid, false);
   assert.equal(validateConfig({ ...mac, diskGb: 0 }).valid, false);
 });
+test("returns typed field errors while preserving the API error list", () => {
+  const invalid = validateConfig({ chip: "m4Pro", memoryGb: 16, diskGb: 0, workload: "other" });
+  assert.equal(invalid.valid, false);
+  if (!invalid.valid) {
+    assert.equal(invalid.fieldErrors.memoryGb, "Choose a memory configuration supported by that chip.");
+    assert.equal(invalid.fieldErrors.diskGb, "Free disk space must be between 1 and 4,000 GB.");
+    assert.deepEqual(invalid.errors, Object.values(invalid.fieldErrors));
+  }
+});
 test("makes Apple Silicon runtimes available", () => { assert.deepEqual(runtimeEligibility(mac, mlx), ["MLX"]); assert.ok(runtimeEligibility(mac, gguf).includes("Ollama")); });
 test("enforces disk bounds and estimates conservative memory", () => { assert.equal(rankArtifacts([gguf], { ...mac, diskGb: 4.9 }).length, 0); assert.ok(estimateMemoryGb(gguf) > gguf.sizeGb); });
 test("ranks coding models and carries gated warning plus runtime commands", () => { const generic = { ...gguf, id: "org/Chat-8B-GGUF", modelId: "org/Chat-8B-GGUF", title: "Chat 8B", paramsB: 8, tags: [] }; const gated = { ...gguf, gated: true }; const ranked = rankArtifacts([generic, gated], mac); assert.equal(ranked[0].title, "Coder 7B"); assert.ok(ranked[0].notes.some((note) => note.startsWith("Gated"))); assert.ok(ranked[0].guidance.some((g) => g.runtime === "llama.cpp" && g.command.includes("-hf"))); });

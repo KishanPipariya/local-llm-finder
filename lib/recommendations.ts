@@ -6,6 +6,8 @@ export type MacConfig = {
 };
 
 export type Chip = keyof typeof chipProfiles;
+export type ConfigField = "chip" | "memoryGb" | "diskGb" | "workload";
+export type ConfigFieldErrors = Partial<Record<ConfigField, string>>;
 
 type ChipProfile = {
   name: string;
@@ -66,15 +68,17 @@ export type Recommendation = Artifact & {
 
 const workloads = ["chat", "coding", "balanced"] as const;
 
-export function validateConfig(value: unknown): { valid: true; data: MacConfig } | { valid: false; errors: string[] } {
+export function validateConfig(value: unknown): { valid: true; data: MacConfig } | { valid: false; errors: string[]; fieldErrors: ConfigFieldErrors } {
   const v = value as Partial<MacConfig>;
   const errors: string[] = [];
+  const fieldErrors: ConfigFieldErrors = {};
   const profile = v && typeof v.chip === "string" ? chipProfiles[v.chip as Chip] : undefined;
-  if (!profile) errors.push("Choose a supported Apple chip.");
-  if (!(profile?.memoryOptionsGb as readonly number[] | undefined)?.includes(v?.memoryGb ?? Number.NaN)) errors.push("Choose a memory configuration supported by that chip.");
-  if (!Number.isFinite(v?.diskGb) || (v.diskGb ?? 0) < 1 || (v.diskGb ?? 0) > 4000) errors.push("Free disk space must be between 1 and 4,000 GB.");
-  if (!workloads.includes(v?.workload as typeof workloads[number])) errors.push("Choose a workload.");
-  return errors.length ? { valid: false, errors } : { valid: true, data: v as MacConfig };
+  if (!profile) fieldErrors.chip = "Choose a supported Apple chip.";
+  if (!(profile?.memoryOptionsGb as readonly number[] | undefined)?.includes(v?.memoryGb ?? Number.NaN)) fieldErrors.memoryGb = "Choose a memory configuration supported by that chip.";
+  if (!Number.isFinite(v?.diskGb) || (v.diskGb ?? 0) < 1 || (v.diskGb ?? 0) > 4000) fieldErrors.diskGb = "Free disk space must be between 1 and 4,000 GB.";
+  if (!workloads.includes(v?.workload as typeof workloads[number])) fieldErrors.workload = "Choose a workload.";
+  errors.push(...Object.values(fieldErrors));
+  return errors.length ? { valid: false, errors, fieldErrors } : { valid: true, data: v as MacConfig };
 }
 
 export function runtimeEligibility(config: MacConfig, artifact: Artifact): Recommendation["runtimes"] {
