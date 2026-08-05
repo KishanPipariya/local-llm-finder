@@ -1,9 +1,9 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import type { MacConfig, Recommendation } from "@/lib/recommendations";
+import { memoryConfigurationsGb, type MacConfig, type Recommendation } from "@/lib/recommendations";
 
-const initial: MacConfig = { architecture: "apple", chipTier: "base", memoryGb: 16, diskGb: 80, macosMajor: 15, workload: "balanced" };
+const initial: MacConfig = { chipTier: "base", memoryGb: 16, diskGb: 80, workload: "balanced" };
 type ResponseData = { recommendations: Recommendation[]; refreshedAt: string; stale: boolean };
 
 export default function Home() {
@@ -22,8 +22,7 @@ export default function Home() {
     <header className="hero"><a className="brand" href="#finder">LOCAL / LLM</a><span className="pill">Mac model finder</span><h1>Find a local model<br/><em>your Mac can actually run.</em></h1><p>Current chat and coding models, sized to your hardware. No account, no tracking, no saved configuration.</p></header>
     <section className="finder" id="finder" aria-labelledby="finder-title"><div className="section-intro"><span className="eyebrow">01 — Your machine</span><h2 id="finder-title">Build your Mac profile</h2><p>We use these details only to calculate this recommendation. Nothing leaves this session except the request needed to fetch results.</p></div>
       <form onSubmit={submit} noValidate>
-        <fieldset><legend>Processor</legend><div className="choices"><label><input type="radio" checked={config.architecture === "apple"} onChange={() => update("architecture", "apple")}/><span>Apple Silicon</span></label><label><input type="radio" checked={config.architecture === "intel"} onChange={() => update("architecture", "intel")}/><span>Intel</span></label></div></fieldset>
-        <div className="fields"><label>Chip tier<select value={config.chipTier} onChange={(e) => update("chipTier", e.target.value as MacConfig["chipTier"])}><option value="base">Base (M1/M2/M3/M4)</option><option value="pro">Pro</option><option value="max">Max</option><option value="ultra">Ultra</option></select></label><label>Unified / system memory (GB)<input required min="8" max="512" type="number" value={config.memoryGb} onChange={(e) => update("memoryGb", Number(e.target.value))}/></label><label>Free disk space (GB)<input required min="1" max="4000" type="number" value={config.diskGb} onChange={(e) => update("diskGb", Number(e.target.value))}/></label><label>macOS major version<input required min="12" max="30" type="number" value={config.macosMajor} onChange={(e) => update("macosMajor", Number(e.target.value))}/></label></div>
+        <div className="fields"><label>Chip tier<select value={config.chipTier} onChange={(e) => update("chipTier", e.target.value as MacConfig["chipTier"])}><option value="base">Base (M1/M2/M3/M4)</option><option value="pro">Pro</option><option value="max">Max</option><option value="ultra">Ultra</option></select></label><label>Unified / system memory (GB)<select value={config.memoryGb} onChange={(e) => update("memoryGb", Number(e.target.value))}>{memoryConfigurationsGb.map((memoryGb) => <option key={memoryGb} value={memoryGb}>{memoryGb} GB</option>)}</select></label><label>Free disk space (GB)<input required min="1" max="4000" type="number" value={config.diskGb} onChange={(e) => update("diskGb", Number(e.target.value))}/></label></div>
         <fieldset><legend>What will you do most?</legend><div className="choices workload"><label><input type="radio" checked={config.workload === "chat"} onChange={() => update("workload", "chat")}/><span>General chat</span></label><label><input type="radio" checked={config.workload === "coding"} onChange={() => update("workload", "coding")}/><span>Coding</span></label><label><input type="radio" checked={config.workload === "balanced"} onChange={() => update("workload", "balanced")}/><span>Balanced</span></label></div></fieldset>
         <button disabled={loading}>{loading ? "Checking current models…" : "Find compatible models"}<b>→</b></button>{error && <p className="error" role="alert">{error}</p>}
       </form>

@@ -1,9 +1,7 @@
 export type MacConfig = {
-  architecture: "apple" | "intel";
   chipTier: "base" | "pro" | "max" | "ultra";
   memoryGb: number;
   diskGb: number;
-  macosMajor: number;
   workload: "chat" | "coding" | "balanced";
 };
 
@@ -33,23 +31,22 @@ export type Recommendation = Artifact & {
 };
 
 const workloads = ["chat", "coding", "balanced"] as const;
+export const memoryConfigurationsGb = [8, 16, 18, 24, 32, 36, 48, 64, 96, 128, 192, 256, 512] as const;
 
 export function validateConfig(value: unknown): { valid: true; data: MacConfig } | { valid: false; errors: string[] } {
   const v = value as Partial<MacConfig>;
   const errors: string[] = [];
-  if (!v || !["apple", "intel"].includes(v.architecture ?? "")) errors.push("Choose Apple Silicon or Intel.");
   if (!v || !["base", "pro", "max", "ultra"].includes(v.chipTier ?? "")) errors.push("Choose a chip tier.");
-  if (!Number.isFinite(v?.memoryGb) || (v.memoryGb ?? 0) < 8 || (v.memoryGb ?? 0) > 512) errors.push("Memory must be between 8 and 512 GB.");
+  if (!memoryConfigurationsGb.includes(v?.memoryGb as typeof memoryConfigurationsGb[number])) errors.push("Choose an available memory configuration.");
   if (!Number.isFinite(v?.diskGb) || (v.diskGb ?? 0) < 1 || (v.diskGb ?? 0) > 4000) errors.push("Free disk space must be between 1 and 4,000 GB.");
-  if (!Number.isInteger(v?.macosMajor) || (v.macosMajor ?? 0) < 12 || (v.macosMajor ?? 0) > 30) errors.push("Enter a supported macOS major version (12 or later).");
   if (!workloads.includes(v?.workload as typeof workloads[number])) errors.push("Choose a workload.");
   return errors.length ? { valid: false, errors } : { valid: true, data: v as MacConfig };
 }
 
 export function runtimeEligibility(config: MacConfig, artifact: Artifact): Recommendation["runtimes"] {
-  if (artifact.format === "mlx") return config.architecture === "apple" ? ["MLX"] : [];
+  if (artifact.format === "mlx") return ["MLX"];
   const runtimes: Recommendation["runtimes"] = ["LM Studio", "llama.cpp"];
-  if (config.architecture === "apple" || config.macosMajor >= 14) runtimes.unshift("Ollama");
+  runtimes.unshift("Ollama");
   return runtimes;
 }
 
@@ -82,12 +79,11 @@ export function rankArtifacts(artifacts: Artifact[], config: MacConfig): Recomme
     const memoryGb = estimateMemoryGb(item);
     if (!runtimes.length || !Number.isFinite(item.sizeGb) || item.sizeGb > config.diskGb) return [];
     const tight = memoryGb > config.memoryGb * 0.82;
-    const slow = config.architecture === "intel" || memoryGb > config.memoryGb * 0.94;
+    const slow = memoryGb > config.memoryGb * 0.94;
     const notes: string[] = [];
     if (tight) notes.push("Tight memory: close other apps and use a modest context window.");
-    if (slow) notes.push(config.architecture === "intel" ? "Intel Macs run this CPU-only; expect slower generation." : "May swap memory or run slowly at larger contexts.");
+    if (slow) notes.push("May swap memory or run slowly at larger contexts.");
     if (item.gated) notes.push("Gated: accept the model licence and sign in to Hugging Face first.");
-    if (config.architecture === "intel" && !runtimes.includes("Ollama")) notes.push("Ollama requires macOS 14+ on Intel; LM Studio and llama.cpp remain available.");
     const performance: Recommendation["performance"] = slow ? "Likely slow" : tight ? "Tight memory" : "Comfortable";
     return [{ ...item, runtimes, memoryGb, performance, notes, why: `${item.paramsB ? `${item.paramsB}B parameters` : "A current compact model"}${config.workload === "coding" ? " with coding-oriented ranking" : " sized for your Mac"}.`, guidance: buildGuidance(item, runtimes) }];
   });
