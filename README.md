@@ -17,4 +17,4 @@ npm run build
 npm test
 ```
 
-The API endpoint is `POST /api/recommendations`. It fetches public Hugging Face Hub data on demand and falls back to the last valid in-memory catalogue if a refresh fails.
+The API endpoint is `POST /api/recommendations`. Submit an exact Apple SoC (`chip`, such as `m4Pro`) with one of that chip's supported unified-memory options. Results include a qualitative `pace` estimate based on published family memory bandwidth and model footprint; it is not a tokens-per-second benchmark. The service fetches public Hugging Face Hub data on demand and falls back to the last valid in-memory catalogue if a refresh fails.
