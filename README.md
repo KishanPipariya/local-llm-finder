@@ -1,16 +1,24 @@
 # Mac Local LLM Finder
 
-A privacy-first finder for current local chat and coding models that fit a Mac. It queries Hugging Face server-side, caches the normalized catalogue for six hours, and makes no attempt to store submitted Mac configurations. The finder is a server-rendered GET form, so it returns recommendations even when JavaScript is disabled.
+A simple way to find local chat and coding models that suit your Apple Silicon Mac. Choose your Mac's chip, unified memory, and available storage, and the finder suggests models you can run on your own computer.
 
-## Local development
+Your Mac configuration is used only to produce the suggestions—it is not saved. The recommendations help you compare likely compatibility, storage needs, and expected pace. They are estimates, so real-world results can vary with your setup and the way you use a model.
 
-Requires Node.js 22.13 or newer.
+## How it works
+
+1. Select your Mac's configuration.
+2. Choose whether you want a chat model or a coding model.
+3. Review the suggested local models and their installation guidance.
+
+## Run locally
+
+You need Node.js 22 or newer.
 
 ```bash
 npm install
 npm run dev
-npm run build
-npm test
 ```
 
-The API endpoint is `POST /api/recommendations`. Submit an exact Apple SoC (`chip`, such as `m4Pro`) with one of that chip's supported unified-memory options. Results include a qualitative `pace` estimate based on published family memory bandwidth and model footprint; it is not a tokens-per-second benchmark. The server-rendered form and API share the same catalogue service, which fetches public Hugging Face Hub data on demand and falls back to the last valid in-memory catalogue if a refresh fails.
+Open [http://localhost:3000](http://localhost:3000) after the development server starts.
+
+For project internals, development checks, and architecture details, see [codewiki.md](codewiki.md).
