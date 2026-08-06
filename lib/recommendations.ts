@@ -55,6 +55,7 @@ export type Artifact = {
   licence?: string;
   gated: boolean;
   tags: string[];
+  pipelineTag?: string;
   sourceUrl: string;
   repositoryUrl: string;
   filename?: string;
@@ -123,31 +124,45 @@ export function expectedPace(profile: ChipProfile, estimatedMemoryGb: number): R
   return "Slow";
 }
 
-function modelScore(item: Artifact, config: MacConfig, memoryGb: number): number {
-  const isCode = isCodingOriented(item);
-  const work = config.workload === "coding" ? (isCode ? 40 : -10) : config.workload === "chat" ? (isCode ? -4 : 18) : (isCode ? 13 : 10);
+function modelScore(item: Artifact, config: MacConfig, memoryGb: number, now: number): number {
+  const work = taskRelevanceScore(item, config.workload);
   // Artifact size is a quantization/download property, not a parameter count.
   // Do not turn missing parameter metadata into an unsupported capability claim.
   const capacity = item.paramsB ? Math.min(35, Math.log2(item.paramsB + 1) * 8) : 0;
   const pace = Math.min(45, Math.log2(chipProfiles[config.chip].bandwidthGbps / memoryGb + 1) * 10);
-  return capacity + pace + work + recencyScore(item.updatedAt) + Math.min(12, Math.log10(Math.max(0, item.downloads) + 1) * 2);
+  return capacity + pace + work + recencyScore(item.updatedAt, now) + Math.min(12, Math.log10(Math.max(0, item.downloads) + 1) * 2);
 }
 
 function isCodingOriented(item: Artifact) {
-  return /(?:^|[^a-z])(?:code|coder|coding|programming)(?:$|[^a-z])/i.test(`${item.title} ${item.tags.join(" ")}`);
+  return /(?:^|[^a-z])(?:code|coder|coding|programming)(?:$|[^a-z])/i.test(taskMetadata(item));
 }
 
-function recencyScore(updatedAt: string) {
+function taskMetadata(item: Artifact) {
+  return `${item.title} ${item.tags.join(" ")} ${item.pipelineTag ?? ""}`;
+}
+
+function isChatOriented(item: Artifact) {
+  return /(?:^|[^a-z])(?:instruct|chat|assistant|conversation|text-generation|text2text-generation)(?:$|[^a-z])/i.test(taskMetadata(item));
+}
+
+function taskRelevanceScore(item: Artifact, workload: MacConfig["workload"]) {
+  const coding = isCodingOriented(item);
+  const chat = isChatOriented(item);
+  if (workload === "coding") return coding ? 36 : chat ? 8 : 0;
+  if (workload === "chat") return chat ? 24 : coding ? 4 : 0;
+  return coding && chat ? 20 : coding || chat ? 14 : 0;
+}
+
+function recencyScore(updatedAt: string, now: number) {
   const updated = Date.parse(updatedAt);
   if (!Number.isFinite(updated)) return 0;
-  const ageDays = Math.max(0, (Date.now() - updated) / (24 * 60 * 60 * 1000));
+  const ageDays = Math.max(0, (now - updated) / (24 * 60 * 60 * 1000));
   return Math.max(0, 6 * (1 - ageDays / 730));
 }
 
 function workloadCategory(item: Artifact): WorkloadCategory {
-  const metadata = `${item.title} ${item.tags.join(" ")}`.toLowerCase();
   if (isCodingOriented(item)) return "coding-oriented";
-  if (/(?:^|[^a-z])(?:instruct|chat|assistant|conversation|text-generation)(?:$|[^a-z])/.test(metadata)) return "general chat";
+  if (isChatOriented(item)) return "general chat";
   return "mixed";
 }
 
@@ -180,7 +195,7 @@ export function buildGuidance(item: Artifact, runtimes: Recommendation["runtimes
   });
 }
 
-export function rankArtifactsWithExplanations(artifacts: Artifact[], config: MacConfig): RankingResult {
+export function rankArtifactsWithExplanations(artifacts: Artifact[], config: MacConfig, now = Date.now()): RankingResult {
   const profile = chipProfiles[config.chip];
   const exclusions = emptyExclusions();
   const eligible = artifacts.flatMap((item) => {
@@ -211,13 +226,13 @@ export function rankArtifactsWithExplanations(artifacts: Artifact[], config: Mac
     return [{ ...item, runtimes, memoryGb, performance, pace, notes, why: `${item.paramsB ? `${item.paramsB}B parameters` : "A current compact model"}; ${workloadRelevance(category, config.workload)} ${profile.name}'s ${profile.bandwidthGbps} GB/s memory bandwidth suggests ${pace.toLowerCase()} expected pace for this footprint.`, guidance: buildGuidance(item, runtimes), explanation: { fit: { disk: { availableBytes: config.diskGb * 1e9, headroomBytes: diskHeadroom }, memory: { availableGb: config.memoryGb, headroomGb: memoryHeadroom, assumption: "File mapping plus conservative runtime, 4k-context, and KV-cache overhead." }, runtimes, workload: { category, relevance: workloadRelevance(category, config.workload) }, pace: { bandwidthGbps: profile.bandwidthGbps, inputs: "Published family memory bandwidth relative to estimated model memory." } }, rankingFactors, familyKey: familyKey(item) } }];
   });
   const grouped = new Map<string, Recommendation>();
-  for (const item of eligible.sort((a, b) => modelScore(b, config, b.memoryGb) - modelScore(a, config, a.memoryGb))) {
+  for (const item of eligible.sort((a, b) => modelScore(b, config, b.memoryGb, now) - modelScore(a, config, a.memoryGb, now))) {
     const key = variantKey(item);
     if (!grouped.has(key)) grouped.set(key, item);
   }
   return { recommendations: [...grouped.values()].slice(0, 10), exclusions };
 }
 
-export function rankArtifacts(artifacts: Artifact[], config: MacConfig): Recommendation[] {
-  return rankArtifactsWithExplanations(artifacts, config).recommendations;
+export function rankArtifacts(artifacts: Artifact[], config: MacConfig, now = Date.now()): Recommendation[] {
+  return rankArtifactsWithExplanations(artifacts, config, now).recommendations;
 }

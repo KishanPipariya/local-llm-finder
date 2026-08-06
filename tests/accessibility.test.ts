@@ -1,11 +1,23 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { createServer } from "node:net";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, type BrowserContext, type Page } from "playwright";
 import { chipProfiles } from "../lib/recommendations.js";
 
-const port = 3199;
-const origin = `http://localhost:${port}`;
+async function allocatePort() {
+  const listener = createServer();
+  listener.listen(0, "127.0.0.1");
+  await once(listener, "listening");
+  const address = listener.address();
+  if (!address || typeof address === "string") throw new Error("Could not allocate a local test port.");
+  await new Promise<void>((resolve, reject) => listener.close((error) => error ? reject(error) : resolve()));
+  return address.port;
+}
+
+const port = await allocatePort();
+const origin = `http://127.0.0.1:${port}`;
 
 async function waitForPage(context: BrowserContext): Promise<Page> {
   const page = await context.newPage();
@@ -21,9 +33,7 @@ async function assertNoAxeViolations(page: Page, state: string) {
   assert.deepEqual(results.violations, [], `axe violations on ${state}: ${results.violations.map((v) => `${v.id}: ${v.help}`).join("; ")}`);
 }
 
-const server = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "--port", String(port)], { stdio: "ignore" });
-server.unref();
-process.once("exit", () => server.kill("SIGTERM"));
+const server = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "--port", String(port)], { stdio: "ignore", env: { ...process.env, MAC_LLM_BROWSER_TEST_FIXTURE: "1" } });
 const browser = await chromium.launch();
 const context = await browser.newContext();
 
@@ -70,6 +80,10 @@ try {
   assert.equal(await invalid.locator("#memoryGb").getAttribute("aria-describedby"), "memory-error");
   assert.equal(await invalid.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "320px viewport reflows without horizontal scrolling");
 
+  const partial = await narrowContext.newPage();
+  await partial.goto(`${origin}/?chip=m4`, { waitUntil: "networkidle" });
+  assert.deepEqual(await partial.locator(".field-error").allTextContents(), ["Choose a memory configuration supported by that chip.", "Free disk space must be between 1 and 4,000 GB.", "Choose a workload."], "partial GET uses the same required fields as the API");
+
   const darkContext = await browser.newContext({ colorScheme: "dark" });
   const dark = await waitForPage(darkContext);
   await assertNoAxeViolations(dark, "dark-theme finder");
@@ -87,14 +101,15 @@ try {
   const noScriptContext = await browser.newContext({ javaScriptEnabled: false });
   const noScript = await noScriptContext.newPage();
   await noScript.goto(origin, { waitUntil: "domcontentloaded" });
-  await noScript.locator("#chip").selectOption("m4Pro");
+  await noScript.locator("#chip").selectOption("m4");
   await noScript.locator("#memoryGb").selectOption("16");
   await noScript.locator("#diskGb").fill("12");
   await noScript.getByRole("button", { name: "Find compatible models" }).click({ force: true, noWaitAfter: true });
   await noScript.waitForURL(/memoryGb=16/);
-  assert.match(noScript.url(), /chip=m4Pro/);
-  assert.ok(await noScript.locator(".error-summary").count(), "server-rendered validation is visible without JavaScript");
-  assert.equal(await noScript.locator("#results").count(), 0);
+  assert.match(noScript.url(), /chip=m4/);
+  assert.equal(await noScript.locator(".error-summary").count(), 0);
+  assert.equal(await noScript.locator("#results").count(), 1, "fixture-backed recommendations render server-side without JavaScript");
+  assert.ok(await noScript.locator(".card").count());
   await noScriptContext.close();
   await narrowDarkContext.close();
   await darkContext.close();
@@ -102,4 +117,8 @@ try {
   await context.close();
 } finally {
   await browser.close();
+  if (server.exitCode === null) {
+    server.kill("SIGTERM");
+    await once(server, "exit");
+  }
 }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { chipProfiles, estimateMemoryGb, rankArtifacts, rankArtifactsWithExplanations, runtimeEligibility, validateConfig, type Artifact, type MacConfig } from "../lib/recommendations";
 import { CatalogueCache, isFresh } from "../lib/catalogue-cache";
-import { normalizationExclusions, normalizeModels } from "../lib/catalogue";
+import { normalizationExclusions, normalizeModels, retrieveCatalogue } from "../lib/catalogue";
 import { createPostHandler } from "../app/api/recommendations/route";
 
 const mac: MacConfig = { chip: "m4", memoryGb: 16, diskGb: 12, workload: "coding" };
@@ -30,6 +30,14 @@ test("returns typed field errors while preserving the API error list", () => {
 test("makes Apple Silicon runtimes available", () => { assert.deepEqual(runtimeEligibility(mac, mlx), ["MLX"]); assert.ok(runtimeEligibility(mac, gguf).includes("Ollama")); });
 test("enforces exact disk boundaries and estimates from exact bytes", () => { assert.equal(rankArtifacts([gguf], { ...mac, diskGb: 4.999999999 }).length, 0); assert.equal(rankArtifacts([gguf], { ...mac, diskGb: 5 }).length, 1); assert.ok(estimateMemoryGb({ ...gguf, sizeGb: 1 }) > 5); });
 test("ranks coding models and carries gated warning plus runtime commands", () => { const generic = { ...gguf, id: "org/Chat-8B-GGUF", modelId: "org/Chat-8B-GGUF", title: "Chat 8B", paramsB: 8, tags: [] }; const gated = { ...gguf, gated: true }; const ranked = rankArtifacts([generic, gated], mac); assert.equal(ranked[0].title, "Coder 7B"); assert.ok(ranked[0].notes.some((note) => note.startsWith("Gated"))); assert.ok(ranked[0].guidance.some((g) => g.runtime === "llama.cpp" && g.command.includes("-hf"))); });
+test("uses Hugging Face task metadata as a bounded workload preference", () => {
+  const coding = { ...gguf, id: "org/Code-GGUF/file.gguf", modelId: "org/Code-GGUF", title: "Plain model", tags: ["coding"], pipelineTag: undefined };
+  const chat = { ...gguf, id: "org/Chat-GGUF/file.gguf", modelId: "org/Chat-GGUF", title: "Plain model", tags: [], pipelineTag: "text2text-generation" };
+  const unknown = { ...gguf, id: "org/Unknown-GGUF/file.gguf", modelId: "org/Unknown-GGUF", title: "Plain model", tags: [], pipelineTag: undefined };
+  assert.equal(rankArtifacts([unknown, chat, coding], { ...mac, workload: "coding" }, Date.parse("2026-08-06T00:00:00Z"))[0].id, coding.id);
+  assert.equal(rankArtifacts([unknown, coding, chat], { ...mac, workload: "chat" }, Date.parse("2026-08-06T00:00:00Z"))[0].id, chat.id);
+  assert.equal(rankArtifacts([unknown], mac, Date.parse("2026-08-06T00:00:00Z")).length, 1, "unknown task metadata remains eligible");
+});
 test("keeps fit tied to memory but changes pace and ranking by chip bandwidth", () => {
   const compact: Artifact = { ...gguf, id: "org/Chat-3B-GGUF", modelId: "org/Chat-3B-GGUF", title: "Chat 3B", sizeBytes: 2_000_000_000, sizeGb: 2, paramsB: 3, tags: [] };
   const larger: Artifact = { ...gguf, id: "org/Chat-8B-GGUF", modelId: "org/Chat-8B-GGUF", title: "Chat 8B", sizeBytes: 6_000_000_000, sizeGb: 6, paramsB: 8, tags: [] };
@@ -58,10 +66,11 @@ test("returns typed fit explanations and actionable exclusion categories", () =>
   assert.ok(result.recommendations[0].explanation.rankingFactors.length >= 3);
 });
 test("normalizes exact GGUF and aggregate MLX artifact sizes", () => {
-  const model = { id: "org/Test-GGUF", siblings: [{ rfilename: "large.Q8.gguf", size: 8_000_000_000 }, { rfilename: "small.Q4_K_M.gguf", size: 4_000_000_001 }, { rfilename: "weights.safetensors", size: 3_000_000_000 }, { rfilename: "config.json", size: 12_000 }, { rfilename: "tokenizer.json", size: 8_000 }, { rfilename: "README.md", size: 900_000_000 }] };
+  const model = { id: "org/Test-GGUF", pipeline_tag: "text-generation", siblings: [{ rfilename: "large.Q8.gguf", size: 8_000_000_000 }, { rfilename: "small.Q4_K_M.gguf", size: 4_000_000_001 }, { rfilename: "weights.safetensors", size: 3_000_000_000 }, { rfilename: "config.json", size: 12_000 }, { rfilename: "tokenizer.json", size: 8_000 }, { rfilename: "README.md", size: 900_000_000 }] };
   const ggufArtifacts = normalizeModels([model], "gguf"); const mlxArtifact = normalizeModels([model], "mlx")[0];
   assert.deepEqual(ggufArtifacts.map((artifact) => [artifact.filename, artifact.quantization, artifact.sizeBytes]), [["small.Q4_K_M.gguf", "Q4_K_M", 4_000_000_001], ["large.Q8.gguf", "Q8", 8_000_000_000]]);
   assert.equal(mlxArtifact.sizeBytes, 3_000_020_000);
+  assert.equal(ggufArtifacts[0].pipelineTag, "text-generation");
   assert.equal(normalizeModels([{ id: "org/bad", siblings: [{ rfilename: "tiny.gguf", size: 1 }] }], "gguf").length, 0);
   assert.equal(normalizeModels([{ id: "org/unknown-tokenizer", siblings: [{ rfilename: "weights.safetensors", size: 3_000_000_000 }, { rfilename: "tokenizer.json" }] }], "mlx").length, 0);
 });
@@ -78,6 +87,12 @@ test("does not infer model capacity from a download footprint and rewards mainta
   const ranked = rankArtifacts([untypedLarge, stale, typed], { ...mac, workload: "balanced" });
   assert.equal(ranked[0].title, "Typed 3B");
   assert.ok(ranked.findIndex((item) => item.id === typed.id) < ranked.findIndex((item) => item.id === stale.id));
+});
+test("uses the supplied ranking clock for deterministic recency ordering", () => {
+  const newer = { ...gguf, id: "org/New-GGUF/file.gguf", modelId: "org/New-GGUF", title: "Same", tags: [], downloads: 1, updatedAt: "2026-08-01T00:00:00Z" };
+  const older = { ...newer, id: "org/Old-GGUF/file.gguf", modelId: "org/Old-GGUF", updatedAt: "2024-01-01T00:00:00Z" };
+  const now = Date.parse("2026-08-06T00:00:00Z");
+  assert.equal(rankArtifacts([older, newer], { ...mac, workload: "balanced" }, now)[0].id, newer.id);
 });
 test("labels IQ and full-precision GGUF variants", () => {
   const artifacts = normalizeModels([{ id: "org/Precision-GGUF", siblings: [{ rfilename: "model.BF16.gguf", size: 9_000_000_000 }, { rfilename: "model.IQ3_XS.gguf", size: 3_000_000_000 }, { rfilename: "model.Q2_K.gguf", size: 2_000_000_000 }] }], "gguf");
@@ -102,11 +117,30 @@ test("cache coalesces concurrent refreshes, rejects invalid timestamps, and back
   assert.equal((await stale.get()).stale, true);
   assert.equal(staleCalls, 2);
 });
+test("refresh deadline aborts requests and cache serves stale data or propagates when empty", async () => {
+  let requestAborted = false;
+  const hangingFetch = (_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => { requestAborted = true; reject(init.signal?.reason); }, { once: true });
+  });
+  await assert.rejects(retrieveCatalogue(hangingFetch as typeof fetch, 5));
+  assert.equal(requestAborted, true, "the refresh deadline reaches outstanding requests");
+
+  const stale = new CatalogueCache(() => retrieveCatalogue(hangingFetch as typeof fetch, 5), 1, () => Date.parse("2026-08-02T00:00:00Z"));
+  (stale as unknown as { state: { items: Artifact[]; refreshedAt: string } }).state = { items: [gguf], refreshedAt: "2026-08-01T00:00:00Z" };
+  assert.equal((await stale.get()).stale, true);
+
+  const empty = new CatalogueCache(() => retrieveCatalogue(hangingFetch as typeof fetch, 5));
+  await assert.rejects(empty.get());
+  const deadlineHandler = createPostHandler(async () => { await empty.get(); throw new Error("unreachable"); });
+  assert.equal((await deadlineHandler(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify(mac) }))).status, 503);
+});
 test("API preserves status codes and returns typed input errors", async () => {
   const response = { recommendations: [], exclusions: { insufficientDisk: 0, insufficientMemory: 0, invalidSize: 0, unsupportedFormat: 0 }, refreshedAt: "2026-08-01T00:00:00Z", stale: true };
   const handler = createPostHandler(async () => response);
   const invalid = await handler(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify({ chip: "m4", memoryGb: 99, diskGb: 0, workload: "nope" }) }));
   assert.equal(invalid.status, 400); assert.ok((await invalid.json()).fieldErrors);
+  const partial = await handler(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify({ chip: "m4" }) }));
+  assert.deepEqual(Object.keys((await partial.json()).fieldErrors).sort(), ["diskGb", "memoryGb", "workload"]);
   const valid = await handler(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify(mac) }));
   assert.deepEqual(await valid.json(), response);
   const unavailable = createPostHandler(async () => { throw new Error("offline"); });

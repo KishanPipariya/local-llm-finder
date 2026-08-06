@@ -10,7 +10,7 @@ const valueOf = (params: SearchParams, key: string) => Array.isArray(params[key]
 export default async function Home({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const params = await searchParams;
   const submitted = ["chip", "memoryGb", "diskGb", "workload"].some((key) => valueOf(params, key) !== undefined);
-  const candidate = { chip: valueOf(params, "chip") ?? initial.chip, memoryGb: Number(valueOf(params, "memoryGb") ?? initial.memoryGb), diskGb: Number(valueOf(params, "diskGb") ?? initial.diskGb), workload: valueOf(params, "workload") ?? initial.workload };
+  const candidate = { chip: valueOf(params, "chip"), memoryGb: valueOf(params, "memoryGb") === undefined ? undefined : Number(valueOf(params, "memoryGb")), diskGb: valueOf(params, "diskGb") === undefined ? undefined : Number(valueOf(params, "diskGb")), workload: valueOf(params, "workload") };
   const validation = submitted ? validateConfig(candidate) : { valid: true as const, data: initial };
   let result;
   let catalogueError = "";

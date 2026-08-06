@@ -3,6 +3,7 @@ import type { Artifact, ExclusionSummary } from "./recommendations";
 
 const MIN_ARTIFACT_BYTES = 100_000_000;
 const REQUEST_TIMEOUT_MS = 12_000;
+export const REFRESH_TIMEOUT_MS = 20_000;
 const DETAIL_CONCURRENCY = 4;
 const HUB_BASE = "https://huggingface.co/api/models";
 
@@ -13,6 +14,7 @@ export type HubModel = {
   lastModified?: string;
   gated?: boolean | string;
   tags?: string[];
+  pipeline_tag?: string;
   cardData?: { license?: string; model_name?: string; params?: string | number };
   siblings?: HubFile[];
 };
@@ -79,6 +81,7 @@ export function normalizeModels(models: HubModel[], format: Artifact["format"]):
         licence: model.cardData?.license,
         gated: Boolean(model.gated),
         tags: Array.isArray(model.tags) ? model.tags.filter((tag): tag is string => typeof tag === "string") : [],
+        pipelineTag: typeof model.pipeline_tag === "string" ? model.pipeline_tag : undefined,
         repositoryUrl: repoUrl(model.id),
         sourceUrl: filename ? fileUrl(model.id, filename) : repoUrl(model.id),
         filename,
@@ -97,8 +100,8 @@ export function normalizationExclusions(models: HubModel[], format: Artifact["fo
   }, {});
 }
 
-async function fetchJson(url: string, fetcher: FetchLike): Promise<unknown> {
-  const response = await fetcher(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+async function fetchJson(url: string, fetcher: FetchLike, refreshSignal: AbortSignal): Promise<unknown> {
+  const response = await fetcher(url, { signal: AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), refreshSignal]) });
   if (!response.ok) throw new Error(`Hugging Face request failed (${response.status})`);
   return response.json();
 }
@@ -119,19 +122,25 @@ function uniqueModels(models: HubModel[]) {
   return [...new Map(models.map((model) => [model.id, model])).values()];
 }
 
-export async function retrieveCatalogue(fetcher: FetchLike = fetch): Promise<Catalogue> {
+export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeoutMs = REFRESH_TIMEOUT_MS): Promise<Catalogue> {
+  const refreshController = new AbortController();
+  const deadline = setTimeout(() => refreshController.abort(new Error("Hugging Face catalogue refresh timed out")), refreshTimeoutMs);
+  try {
   const base = `${HUB_BASE}?full=true&limit=20&sort=downloads&direction=-1`;
   const [ggufList, mlxList] = await Promise.all([
-    fetchJson(`${base}&search=GGUF`, fetcher).then(parseHubModelList),
-    fetchJson(`${base}&author=mlx-community`, fetcher).then(parseHubModelList),
+    fetchJson(`${base}&search=GGUF`, fetcher, refreshController.signal).then(parseHubModelList),
+    fetchJson(`${base}&author=mlx-community`, fetcher, refreshController.signal).then(parseHubModelList),
   ]);
   const models = uniqueModels([...ggufList, ...mlxList]);
   const details = await mapWithConcurrency(models, DETAIL_CONCURRENCY, async (model) => {
     const id = model.id.split("/").map(encodeURIComponent).join("/");
     try {
-      const detail = await fetchJson(`${HUB_BASE}/${id}?blobs=true`, fetcher);
+      const detail = await fetchJson(`${HUB_BASE}/${id}?blobs=true`, fetcher, refreshController.signal);
       return isHubModel(detail) ? detail : model;
-    } catch { return model; }
+    } catch (error) {
+      if (refreshController.signal.aborted) throw error;
+      return model;
+    }
   });
   const ggufModels = details.filter((model) => ggufList.some((listed) => listed.id === model.id));
   const mlxModels = details.filter((model) => mlxList.some((listed) => listed.id === model.id));
@@ -140,7 +149,35 @@ export async function retrieveCatalogue(fetcher: FetchLike = fetch): Promise<Cat
   const ggufExclusions = normalizationExclusions(ggufModels, "gguf");
   const mlxExclusions = normalizationExclusions(mlxModels, "mlx");
   return { items, refreshedAt: new Date().toISOString(), exclusions: { invalidSize: (ggufExclusions.invalidSize ?? 0) + (mlxExclusions.invalidSize ?? 0), unsupportedFormat: (ggufExclusions.unsupportedFormat ?? 0) + (mlxExclusions.unsupportedFormat ?? 0) } };
+  } finally {
+    clearTimeout(deadline);
+  }
 }
 
-const cache = new CatalogueCache(retrieveCatalogue);
+// This is intentionally reachable only from the child process spawned by the
+// browser suite. It keeps the progressive-enhancement check offline and does
+// not create a public endpoint or persist any configuration.
+const browserTestCatalogue: Catalogue = {
+  items: [{
+    id: "test/Local-Chat-7B-GGUF/local-chat.Q4_K_M.gguf",
+    modelId: "test/Local-Chat-7B-GGUF",
+    title: "Local Chat 7B",
+    format: "gguf",
+    sizeBytes: 5_000_000_000,
+    sizeGb: 5,
+    paramsB: 7,
+    quantization: "Q4_K_M",
+    downloads: 1,
+    updatedAt: "2026-08-01T00:00:00Z",
+    gated: false,
+    tags: ["instruct"],
+    pipelineTag: "text-generation",
+    repositoryUrl: "https://huggingface.co/test/Local-Chat-7B-GGUF",
+    sourceUrl: "https://huggingface.co/test/Local-Chat-7B-GGUF/resolve/main/local-chat.Q4_K_M.gguf",
+    filename: "local-chat.Q4_K_M.gguf",
+  }],
+  refreshedAt: "2026-08-01T00:00:00Z",
+};
+
+const cache = new CatalogueCache(process.env.MAC_LLM_BROWSER_TEST_FIXTURE === "1" ? async () => browserTestCatalogue : retrieveCatalogue);
 export const getCatalogue = () => cache.get();

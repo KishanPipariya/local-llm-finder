@@ -29,7 +29,9 @@ hydration it exposes only unified-memory options supported by the selected chip
 and chooses the closest valid amount (ties go lower) when a chip change makes
 the current amount impossible. The initial server-rendered HTML retains the
 complete memory list, so no-JavaScript users keep the same server-validated
-fallback flow.
+fallback flow. Once any configuration query parameter is present, all four
+fields are required; incomplete direct GET requests receive the same
+field-specific errors as the JSON API.
 
 ## Repository map
 
@@ -62,7 +64,8 @@ fallback flow.
 - `workload`: `chat`, `coding`, or `balanced`.
 
 It returns both an ordered error list and typed field errors. Both GET and POST
-must use this function so they reject the same impossible Mac configurations.
+must use this function so they reject the same impossible Mac configurations,
+including incomplete submitted configurations.
 
 ### Artifact normalization and fit
 
@@ -89,8 +92,13 @@ It keeps the highest-ranked representative of
 each normalized model-family/format/quantization variant and returns at most ten results. Every returned
 recommendation includes typed fit checks (disk and memory headroom, compatible
 runtimes, workload category, and pace inputs), ranking contributors, and its
-normalized family key. Workload metadata is presented only as coding-oriented,
-general chat, or mixed—not as a capability benchmark.
+normalized family key. Hugging Face `pipeline_tag` is retained alongside titles
+and tags: text generation, text-to-text generation, instruct/chat, and coding
+metadata add a bounded workload preference. Missing or unknown task metadata
+stays eligible and neutral. Workload metadata is presented only as
+coding-oriented, general chat, or mixed—not as a capability benchmark. Ranking
+accepts an optional clock value for deterministic callers and tests; normal
+requests use `Date.now()`.
 
 The recommendation result also includes an `exclusions` count by reason. Counts
 include candidates rejected during Hugging Face normalization, but never expose
@@ -111,9 +119,11 @@ two add operational notes.
 
 `retrieveCatalogue` makes two server-side Hugging Face list requests: popular
 GGUF repositories and repositories from `mlx-community`. It then loads model
-details (up to four at once) to obtain artifact file sizes. Any individual
-detail request may fall back to its list result; an empty usable catalogue fails
-the full refresh.
+details (up to four at once) to obtain artifact file sizes. Each request has a
+12-second timeout, while a complete refresh has a 20-second deadline that
+aborts all outstanding list and detail requests. An individual detail request
+may fall back to its list result unless that refresh-wide deadline expires; an
+empty usable catalogue fails the full refresh.
 
 `CatalogueCache` holds the last valid normalized catalogue in memory for six
 hours. Concurrent callers share one refresh promise. If a later refresh fails
@@ -144,9 +154,12 @@ npm run build
 
 Run all three verification commands for relevant changes. `npm test` includes
 both the Node test suite and the Playwright/axe accessibility suite; the latter
-builds the app and starts a local production Next.js server on port 3199. Its
-no-JavaScript flow validates the server-rendered GET error path without calling
-the external catalogue.
+builds the app, allocates an ephemeral localhost port, and starts a local
+production Next.js server. That spawned browser-test process alone receives an
+in-memory catalogue fixture; the fixture has no public endpoint or persistence
+and lets the no-JavaScript flow assert successful server-rendered results
+without calling the external catalogue. Cleanup explicitly terminates and waits
+for the production server.
 
 Use Node 26.x (`.nvmrc` is provided). GitHub Actions installs that version,
 installs Chromium for Playwright, and runs the full verification set on pushes
