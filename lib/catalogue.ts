@@ -1,53 +1,121 @@
+import { CatalogueCache, type Catalogue } from "./catalogue-cache";
 import type { Artifact } from "./recommendations";
-import { cachedCatalogue } from "./catalogue-cache";
 
-const MAX_AGE = 6 * 60 * 60 * 1000;
-let catalogue: { items: Artifact[]; refreshedAt: string } | undefined;
+const MIN_ARTIFACT_BYTES = 100_000_000;
+const REQUEST_TIMEOUT_MS = 12_000;
+const DETAIL_CONCURRENCY = 4;
+const HUB_BASE = "https://huggingface.co/api/models";
 
-type HubModel = { id: string; downloads?: number; lastModified?: string; gated?: boolean | string; tags?: string[]; cardData?: { license?: string; model_name?: string; params?: string | number }; siblings?: { rfilename: string; size?: number }[] };
+export type HubFile = { rfilename: string; size?: number };
+export type HubModel = {
+  id: string;
+  downloads?: number;
+  lastModified?: string;
+  gated?: boolean | string;
+  tags?: string[];
+  cardData?: { license?: string; model_name?: string; params?: string | number };
+  siblings?: HubFile[];
+};
+
+type FetchLike = typeof fetch;
 
 const params = (value: unknown, text: string): number | undefined => {
   const match = String(value ?? text).match(/(\d+(?:\.\d+)?)\s*[bB](?:illion)?\b/);
   return match ? Number(match[1]) : undefined;
 };
 const titleOf = (id: string) => id.split("/").at(-1)?.replace(/-(GGUF|MLX)$/i, "") ?? id;
+const validSize = (size: unknown): size is number => typeof size === "number" && Number.isSafeInteger(size) && size >= MIN_ARTIFACT_BYTES;
+const repoUrl = (id: string) => `https://huggingface.co/${id}`;
+const fileUrl = (id: string, filename: string) => `${repoUrl(id)}/resolve/main/${filename.split("/").map(encodeURIComponent).join("/")}`;
 
-function preferredGguf(files: { rfilename: string; size?: number }[]) {
-  const quantized = files.filter((file) => /(?:Q4_K_M|Q4_K_S|Q4_0|Q4_1|IQ4)/i.test(file.rfilename));
-  return (quantized.length ? quantized : files).sort((a, b) => (a.size ?? 0) - (b.size ?? 0))[0];
+export function isHubModel(value: unknown): value is HubModel {
+  return Boolean(value) && typeof value === "object" && typeof (value as { id?: unknown }).id === "string";
 }
 
-function normalize(models: HubModel[], format: Artifact["format"]): Artifact[] {
+export function parseHubModelList(value: unknown): HubModel[] {
+  if (!Array.isArray(value) || !value.every(isHubModel)) throw new Error("Hugging Face returned an invalid model list");
+  return value;
+}
+
+function preferredGguf(files: HubFile[]) {
+  const valid = files.filter((file) => validSize(file.size));
+  const quantized = valid.filter((file) => /(?:Q4_K_M|Q4_K_S|Q4_0|Q4_1|IQ4)/i.test(file.rfilename));
+  return (quantized.length ? quantized : valid).sort((a, b) => a.size! - b.size!)[0];
+}
+
+export function normalizeModels(models: HubModel[], format: Artifact["format"]): Artifact[] {
   return models.flatMap((model) => {
-    const files = model.siblings ?? [];
-    const matched = format === "gguf" ? files.filter((f) => /\.gguf$/i.test(f.rfilename)) : files.filter((f) => /config\.json$|\.safetensors$/i.test(f.rfilename));
+    const files = Array.isArray(model.siblings) ? model.siblings.filter((file): file is HubFile => Boolean(file) && typeof file.rfilename === "string") : [];
+    const matched = format === "gguf" ? files.filter((file) => /\.gguf$/i.test(file.rfilename)) : files.filter((file) => /config\.json$|\.safetensors$/i.test(file.rfilename));
     const selected = format === "gguf" ? preferredGguf(matched) : undefined;
-    const size = selected?.size ?? (format === "mlx" ? matched.reduce((sum, f) => sum + (f.size ?? 0), 0) : 0);
-    if (!size || size < 100_000_000) return [];
-    const q = selected?.rfilename.match(/(Q\d(?:_[A-Z]+)?|IQ\d_[A-Z]+)/i)?.[1];
-    return [{ id: model.id, modelId: model.id, title: titleOf(model.id), format, sizeGb: Math.round((size / 1e9) * 10) / 10, paramsB: params(model.cardData?.params, `${model.id} ${(model.tags ?? []).join(" ")}`), quantization: q, downloads: model.downloads ?? 0, updatedAt: model.lastModified ?? new Date(0).toISOString(), licence: model.cardData?.license, gated: Boolean(model.gated), tags: model.tags ?? [], sourceUrl: `https://huggingface.co/${model.id}` }];
+    const sizeBytes = format === "gguf" ? selected?.size : matched.reduce((sum, file) => validSize(file.size) ? sum + file.size : Number.NaN, 0);
+    if (!validSize(sizeBytes)) return [];
+    const filename = selected?.rfilename;
+    const q = filename?.match(/(Q\d(?:_[A-Z]+)?|IQ\d_[A-Z]+)/i)?.[1];
+    return [{
+      id: filename ? `${model.id}/${filename}` : model.id,
+      modelId: model.id,
+      title: titleOf(model.id),
+      format,
+      sizeBytes,
+      sizeGb: Math.round((sizeBytes / 1e9) * 10) / 10,
+      paramsB: params(model.cardData?.params, `${model.id} ${(model.tags ?? []).join(" ")}`),
+      quantization: q,
+      downloads: Number.isFinite(model.downloads) ? model.downloads! : 0,
+      updatedAt: typeof model.lastModified === "string" ? model.lastModified : new Date(0).toISOString(),
+      licence: model.cardData?.license,
+      gated: Boolean(model.gated),
+      tags: Array.isArray(model.tags) ? model.tags.filter((tag): tag is string => typeof tag === "string") : [],
+      repositoryUrl: repoUrl(model.id),
+      sourceUrl: filename ? fileUrl(model.id, filename) : repoUrl(model.id),
+      filename,
+    }];
   });
 }
 
-async function refresh(): Promise<{ items: Artifact[]; refreshedAt: string }> {
-  const base = "https://huggingface.co/api/models?full=true&limit=20&sort=downloads&direction=-1";
-  const [gguf, mlx] = await Promise.all([
-    fetch(`${base}&search=GGUF`).then((r) => r.ok ? r.json() : Promise.reject(new Error("Hugging Face GGUF request failed"))),
-    fetch(`${base}&author=mlx-community`).then((r) => r.ok ? r.json() : Promise.reject(new Error("Hugging Face MLX request failed"))),
-  ]);
-  const details = await Promise.all([...gguf, ...mlx].map(async (model: HubModel) => {
-    const id = model.id.split("/").map(encodeURIComponent).join("/");
-    const response = await fetch(`https://huggingface.co/api/models/${id}?blobs=true`);
-    return response.ok ? response.json() as Promise<HubModel> : model;
+async function fetchJson(url: string, fetcher: FetchLike): Promise<unknown> {
+  const response = await fetcher(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+  if (!response.ok) throw new Error(`Hugging Face request failed (${response.status})`);
+  return response.json();
+}
+
+export async function mapWithConcurrency<T, R>(values: T[], limit: number, worker: (value: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, values.length) }, async () => {
+    while (next < values.length) {
+      const index = next++;
+      results[index] = await worker(values[index]);
+    }
   }));
-  const ggufIds = new Set(gguf.map((model: HubModel) => model.id));
-  const items = [...normalize(details.filter((model) => ggufIds.has(model.id)), "gguf"), ...normalize(details.filter((model) => !ggufIds.has(model.id)), "mlx")];
+  return results;
+}
+
+function uniqueModels(models: HubModel[]) {
+  return [...new Map(models.map((model) => [model.id, model])).values()];
+}
+
+export async function retrieveCatalogue(fetcher: FetchLike = fetch): Promise<Catalogue> {
+  const base = `${HUB_BASE}?full=true&limit=20&sort=downloads&direction=-1`;
+  const [ggufList, mlxList] = await Promise.all([
+    fetchJson(`${base}&search=GGUF`, fetcher).then(parseHubModelList),
+    fetchJson(`${base}&author=mlx-community`, fetcher).then(parseHubModelList),
+  ]);
+  const models = uniqueModels([...ggufList, ...mlxList]);
+  const details = await mapWithConcurrency(models, DETAIL_CONCURRENCY, async (model) => {
+    const id = model.id.split("/").map(encodeURIComponent).join("/");
+    try {
+      const detail = await fetchJson(`${HUB_BASE}/${id}?blobs=true`, fetcher);
+      return isHubModel(detail) ? detail : model;
+    } catch { return model; }
+  });
+  const items = [
+    ...normalizeModels(details.filter((model) => ggufList.some((listed) => listed.id === model.id)), "gguf"),
+    ...normalizeModels(details.filter((model) => mlxList.some((listed) => listed.id === model.id)), "mlx"),
+  ];
   if (!items.length) throw new Error("Hugging Face returned no usable artifacts");
   return { items, refreshedAt: new Date().toISOString() };
 }
 
-export async function getCatalogue() {
-  const cached = await cachedCatalogue(catalogue, refresh, Date.now(), MAX_AGE);
-  catalogue = cached.catalogue;
-  return cached;
-}
+const cache = new CatalogueCache(retrieveCatalogue);
+export const getCatalogue = () => cache.get();

@@ -51,6 +51,7 @@ try {
   await noScript.getByRole("button", { name: "Find compatible models" }).click();
   await noScript.waitForURL(/diskGb=12/);
   assert.match(noScript.url(), /chip=m4/);
+  assert.ok(await noScript.locator("#results").count(), "server-rendered results are visible without JavaScript");
   await noScriptContext.close();
   await narrowContext.close();
   await context.close();

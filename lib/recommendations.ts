@@ -45,6 +45,8 @@ export type Artifact = {
   modelId: string;
   title: string;
   format: "gguf" | "mlx";
+  /** Exact artifact bytes: use this for all fit calculations. */
+  sizeBytes: number;
   sizeGb: number;
   paramsB?: number;
   quantization?: string;
@@ -54,6 +56,8 @@ export type Artifact = {
   gated: boolean;
   tags: string[];
   sourceUrl: string;
+  repositoryUrl: string;
+  filename?: string;
 };
 
 export type Recommendation = Artifact & {
@@ -90,7 +94,8 @@ export function runtimeEligibility(config: MacConfig, artifact: Artifact): Recom
 
 export function estimateMemoryGb(artifact: Artifact): number {
   // File mapping plus KV/context/runtime overhead; deliberately conservative for a 4k context.
-  return Math.round((artifact.sizeGb + Math.max(1.4, artifact.sizeGb * 0.22) + (artifact.paramsB ? Math.min(2.5, artifact.paramsB * 0.025) : 0)) * 10) / 10;
+  const sizeGb = artifact.sizeBytes / 1e9;
+  return Math.round((sizeGb + Math.max(1.4, sizeGb * 0.22) + (artifact.paramsB ? Math.min(2.5, artifact.paramsB * 0.025) : 0)) * 10) / 10;
 }
 
 export function expectedPace(profile: ChipProfile, estimatedMemoryGb: number): Recommendation["pace"] {
@@ -112,11 +117,12 @@ function modelScore(item: Artifact, config: MacConfig, memoryGb: number): number
 
 export function buildGuidance(item: Artifact, runtimes: Recommendation["runtimes"]): Recommendation["guidance"] {
   const q = item.quantization ? ` (${item.quantization})` : "";
+  const artifact = item.filename ? `${item.modelId}/${item.filename}` : item.modelId;
   return runtimes.map((runtime) => {
-    if (runtime === "Ollama") return { runtime, command: `See ${item.sourceUrl} and import its GGUF with an Ollama Modelfile.` };
-    if (runtime === "LM Studio") return { runtime, command: `lms get ${item.id}  # or open the model link in LM Studio${q}` };
-    if (runtime === "llama.cpp") return { runtime, command: `llama-cli -hf ${item.id} -p "Hello"` };
-    return { runtime, command: `uvx mlx_lm.generate --model ${item.id} --prompt "Hello"` };
+    if (runtime === "Ollama") return { runtime, command: `Download ${artifact} from ${item.sourceUrl}, then import that GGUF with an Ollama Modelfile.` };
+    if (runtime === "LM Studio") return { runtime, command: `lms get ${artifact}  # or open the exact file link in LM Studio${q}` };
+    if (runtime === "llama.cpp") return { runtime, command: `llama-cli -hf ${artifact} -p "Hello"` };
+    return { runtime, command: `uvx mlx_lm.generate --model ${item.modelId} --prompt "Hello"` };
   });
 }
 
@@ -125,7 +131,7 @@ export function rankArtifacts(artifacts: Artifact[], config: MacConfig): Recomme
   const eligible = artifacts.flatMap((item) => {
     const runtimes = runtimeEligibility(config, item);
     const memoryGb = estimateMemoryGb(item);
-    if (!runtimes.length || !Number.isFinite(item.sizeGb) || item.sizeGb > config.diskGb || memoryGb > config.memoryGb) return [];
+    if (!runtimes.length || !Number.isSafeInteger(item.sizeBytes) || item.sizeBytes <= 0 || item.sizeBytes > config.diskGb * 1e9 || memoryGb > config.memoryGb) return [];
     const tight = memoryGb > config.memoryGb * 0.82;
     const slow = memoryGb > config.memoryGb * 0.94;
     const notes: string[] = [];
