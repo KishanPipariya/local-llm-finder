@@ -55,6 +55,8 @@ chat and coding models for a selected Apple Silicon Mac configuration.
 
 - Add or update focused tests whenever changing validation, ranking, memory
   estimates, cache behavior, normalization, or API error handling.
+- Keep `codewiki.md` in sync with the repository whenever its architecture,
+  request/data flows, behavioral contracts, commands, or file layout change.
 - Avoid adding analytics, account integrations, databases, or environment
   variables unless the product requirement explicitly changes.
 - Keep UI changes accessible: semantic form controls, visible keyboard focus,
