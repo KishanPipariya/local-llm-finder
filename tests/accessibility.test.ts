@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, type BrowserContext, type Page } from "playwright";
+import { chipProfiles } from "../lib/recommendations.js";
 
 const port = 3199;
 const origin = `http://127.0.0.1:${port}`;
@@ -34,6 +35,29 @@ try {
   const button = initial.getByRole("button", { name: "Find compatible models" });
   const buttonBox = await button.boundingBox();
   assert.ok(buttonBox && buttonBox.width >= 44 && buttonBox.height >= 44, "submit target is at least 44 by 44 CSS pixels");
+
+  await initial.waitForFunction(() => document.querySelectorAll("#memoryGb option").length === 3);
+  for (const [chip, profile] of Object.entries(chipProfiles)) {
+    await initial.locator("#chip").selectOption(chip);
+    assert.deepEqual(await initial.locator("#memoryGb option").evaluateAll((options) => options.map((option) => option.getAttribute("value"))), profile.memoryOptionsGb.map(String), `${profile.name} exposes only its supported memory options`);
+  }
+
+  await initial.locator("#memoryGb").selectOption("16");
+  await initial.locator("#chip").selectOption("m4Pro");
+  assert.equal(await initial.locator("#memoryGb").inputValue(), "24");
+  await assertNoAxeViolations(initial, "chip-adjusted finder");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(await initial.locator("[aria-live=polite]").textContent(), "Unified memory adjusted to 24 GB for M4 Pro.");
+
+  await initial.locator("#chip").selectOption("m4");
+  await initial.locator("#memoryGb").selectOption("24");
+  await initial.locator("#chip").selectOption("m1Pro");
+  assert.equal(await initial.locator("#memoryGb").inputValue(), "16", "equal-distance choices prefer lower memory");
+
+  await initial.locator("#chip").selectOption("m4Pro");
+  await initial.locator("#memoryGb").selectOption("48");
+  await initial.locator("#chip").selectOption("m5Pro");
+  assert.equal(await initial.locator("#memoryGb").inputValue(), "48", "shared memory remains selected");
 
   const narrowContext = await browser.newContext({ viewport: { width: 320, height: 720 } });
   const invalid = await narrowContext.newPage();

@@ -24,6 +24,12 @@ Browser POST /api/recommendations (same configuration JSON)
 `app/page.tsx` is intentionally a server component. Its query parameters make
 the page request-time rendered. The form in `FinderForm` uses `method="get"`,
 so the ordinary page flow remains functional when JavaScript is disabled.
+`HardwareSelector` is a small progressive-enhancement client component: after
+hydration it exposes only unified-memory options supported by the selected chip
+and chooses the closest valid amount (ties go lower) when a chip change makes
+the current amount impossible. The initial server-rendered HTML retains the
+complete memory list, so no-JavaScript users keep the same server-validated
+fallback flow.
 
 ## Repository map
 
@@ -32,6 +38,7 @@ so the ordinary page flow remains functional when JavaScript is disabled.
 | `app/layout.tsx` | Root HTML layout and site metadata. |
 | `app/page.tsx` | Parses GET query values, validates them, retrieves results, and renders page-level errors. |
 | `app/components/finder-form.tsx` | Accessible configuration form and field-level validation messages. |
+| `app/components/hardware-selector.tsx` | Client-side chip/memory filtering and accessible automatic-adjustment announcement. |
 | `app/components/results.tsx` | Results heading, stale-catalogue notice, empty state, and pace disclaimer. |
 | `app/components/recommendation-card.tsx` | Recommendation details, Hugging Face link, and runtime guidance. |
 | `app/api/recommendations/route.ts` | Node.js POST JSON endpoint; exposes `createPostHandler` for testing. |

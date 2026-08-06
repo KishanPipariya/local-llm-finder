@@ -31,6 +31,7 @@ legend { font-weight: 700; margin-bottom: 11px; }
 .choices input:checked + span::before { content: "Selected: "; margin-right: .3em; }
 .choices input:focus-visible + span { outline: 3px solid var(--focus); outline-offset: 3px; box-shadow: 0 0 0 6px var(--paper); }
 .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .fields label { font-size: 14px; font-weight: 700; }
 .fields input, .fields select { width: 100%; min-height: 44px; display: block; margin-top: 7px; border: 2px solid var(--line); background: var(--paper); border-radius: 0; padding: 9px 12px; font: inherit; color: var(--ink); }
 [aria-invalid="true"] { border-color: var(--error) !important; }
