@@ -37,39 +37,48 @@ export function parseHubModelList(value: unknown): HubModel[] {
   return value;
 }
 
-function preferredGguf(files: HubFile[]) {
-  const valid = files.filter((file) => validSize(file.size));
-  const quantized = valid.filter((file) => /(?:Q4_K_M|Q4_K_S|Q4_0|Q4_1|IQ4)/i.test(file.rfilename));
-  return (quantized.length ? quantized : valid).sort((a, b) => a.size! - b.size!)[0];
+function validGgufFiles(files: HubFile[]) {
+  return files.filter((file) => validSize(file.size)).sort((a, b) => a.size! - b.size! || a.rfilename.localeCompare(b.rfilename));
+}
+
+function quantizationOf(filename: string) {
+  // GGUF names commonly use Q2-Q8 (including K/IQ variants), or full-precision
+  // labels such as F16/BF16/F32. Preserve the label so it is visible in the UI.
+  const match = filename.match(/(?:^|[._-])((?:I?Q\d+(?:_[A-Z0-9]+)*)|(?:BF16|F(?:16|32)))(?=[._-]|$)/i);
+  return match?.[1]?.toUpperCase();
 }
 
 export function normalizeModels(models: HubModel[], format: Artifact["format"]): Artifact[] {
   return models.flatMap((model) => {
     const files = Array.isArray(model.siblings) ? model.siblings.filter((file): file is HubFile => Boolean(file) && typeof file.rfilename === "string") : [];
     const matched = format === "gguf" ? files.filter((file) => /\.gguf$/i.test(file.rfilename)) : files.filter((file) => /config\.json$|\.safetensors$/i.test(file.rfilename));
-    const selected = format === "gguf" ? preferredGguf(matched) : undefined;
-    const sizeBytes = format === "gguf" ? selected?.size : matched.reduce((sum, file) => validSize(file.size) ? sum + file.size : Number.NaN, 0);
-    if (!validSize(sizeBytes)) return [];
-    const filename = selected?.rfilename;
-    const q = filename?.match(/(Q\d(?:_[A-Z]+)?|IQ\d_[A-Z]+)/i)?.[1];
-    return [{
-      id: filename ? `${model.id}/${filename}` : model.id,
-      modelId: model.id,
-      title: titleOf(model.id),
-      format,
-      sizeBytes,
-      sizeGb: Math.round((sizeBytes / 1e9) * 10) / 10,
-      paramsB: params(model.cardData?.params, `${model.id} ${(model.tags ?? []).join(" ")}`),
-      quantization: q,
-      downloads: Number.isFinite(model.downloads) ? model.downloads! : 0,
-      updatedAt: typeof model.lastModified === "string" ? model.lastModified : new Date(0).toISOString(),
-      licence: model.cardData?.license,
-      gated: Boolean(model.gated),
-      tags: Array.isArray(model.tags) ? model.tags.filter((tag): tag is string => typeof tag === "string") : [],
-      repositoryUrl: repoUrl(model.id),
-      sourceUrl: filename ? fileUrl(model.id, filename) : repoUrl(model.id),
-      filename,
-    }];
+    const selectedFiles = format === "gguf" ? validGgufFiles(matched) : [undefined];
+    if (format === "gguf" && !selectedFiles.length) return [];
+    const sizeBytes = format === "gguf" ? undefined : matched.reduce((sum, file) => validSize(file.size) ? sum + file.size : Number.NaN, 0);
+    if (format === "mlx" && !validSize(sizeBytes)) return [];
+    return selectedFiles.flatMap((selected) => {
+      const artifactSize = format === "gguf" ? selected!.size : sizeBytes;
+      if (!validSize(artifactSize)) return [];
+      const filename = selected?.rfilename;
+      return [{
+        id: filename ? `${model.id}/${filename}` : model.id,
+        modelId: model.id,
+        title: titleOf(model.id),
+        format,
+        sizeBytes: artifactSize,
+        sizeGb: Math.round((artifactSize / 1e9) * 10) / 10,
+        paramsB: params(model.cardData?.params, `${model.id} ${(model.tags ?? []).join(" ")}`),
+        quantization: filename ? quantizationOf(filename) : undefined,
+        downloads: Number.isFinite(model.downloads) ? model.downloads! : 0,
+        updatedAt: typeof model.lastModified === "string" ? model.lastModified : new Date(0).toISOString(),
+        licence: model.cardData?.license,
+        gated: Boolean(model.gated),
+        tags: Array.isArray(model.tags) ? model.tags.filter((tag): tag is string => typeof tag === "string") : [],
+        repositoryUrl: repoUrl(model.id),
+        sourceUrl: filename ? fileUrl(model.id, filename) : repoUrl(model.id),
+        filename,
+      }];
+    });
   });
 }
 

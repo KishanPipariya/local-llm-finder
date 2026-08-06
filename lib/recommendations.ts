@@ -150,6 +150,10 @@ function familyKey(item: Artifact) {
   return item.modelId.replace(/-(GGUF|MLX|[Qq]\d[^/]*)$/i, "");
 }
 
+function variantKey(item: Recommendation) {
+  return `${item.explanation.familyKey}|${item.format}|${item.quantization ?? item.filename ?? item.id}`;
+}
+
 function emptyExclusions(): ExclusionSummary {
   return { insufficientDisk: 0, insufficientMemory: 0, invalidSize: 0, unsupportedFormat: 0 };
 }
@@ -196,7 +200,7 @@ export function rankArtifactsWithExplanations(artifacts: Artifact[], config: Mac
   });
   const grouped = new Map<string, Recommendation>();
   for (const item of eligible.sort((a, b) => modelScore(b, config, b.memoryGb) - modelScore(a, config, a.memoryGb))) {
-    const key = item.explanation.familyKey;
+    const key = variantKey(item);
     if (!grouped.has(key)) grouped.set(key, item);
   }
   return { recommendations: [...grouped.values()].slice(0, 10), exclusions };

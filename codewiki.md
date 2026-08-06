@@ -70,8 +70,9 @@ must use this function so they reject the same impossible Mac configurations.
 `sizeGb` is display-only. Normalization excludes unknown, non-integer, and
 smaller-than-100 MB artifacts.
 
-- GGUF: select the smallest preferred 4-bit quantized `.gguf` file, otherwise
-  the smallest valid GGUF file. It supports Ollama, LM Studio, and llama.cpp.
+- GGUF: retain every valid `.gguf` file as a separate quantization variant (Q2–Q8,
+  IQ variants, and F16/BF16/F32 labels when present). It supports Ollama, LM
+  Studio, and llama.cpp.
 - MLX: add valid `config.json` and `.safetensors` file sizes. It supports MLX.
 - Disk fit is strict: the exact byte size must be no greater than free disk.
 - Memory estimate adds conservative file-mapping, runtime, and context overhead.
@@ -80,7 +81,7 @@ smaller-than-100 MB artifacts.
 
 The ranking score combines model capacity, workload fit, a qualitative pace
 factor, and download popularity. It keeps the highest-ranked representative of
-each normalized model family and returns at most ten results. Every returned
+each normalized model-family/format/quantization variant and returns at most ten results. Every returned
 recommendation includes typed fit checks (disk and memory headroom, compatible
 runtimes, workload category, and pace inputs), ranking contributors, and its
 normalized family key. Workload metadata is presented only as coding-oriented,

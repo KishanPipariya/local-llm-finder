@@ -59,9 +59,20 @@ test("returns typed fit explanations and actionable exclusion categories", () =>
 });
 test("normalizes exact GGUF and aggregate MLX artifact sizes", () => {
   const model = { id: "org/Test-GGUF", siblings: [{ rfilename: "large.Q8.gguf", size: 8_000_000_000 }, { rfilename: "small.Q4_K_M.gguf", size: 4_000_000_001 }, { rfilename: "weights.safetensors", size: 3_000_000_000 }, { rfilename: "config.json", size: 200_000_000 }] };
-  const ggufArtifact = normalizeModels([model], "gguf")[0]; const mlxArtifact = normalizeModels([model], "mlx")[0];
-  assert.equal(ggufArtifact.filename, "small.Q4_K_M.gguf"); assert.equal(ggufArtifact.sizeBytes, 4_000_000_001); assert.equal(mlxArtifact.sizeBytes, 3_200_000_000);
+  const ggufArtifacts = normalizeModels([model], "gguf"); const mlxArtifact = normalizeModels([model], "mlx")[0];
+  assert.deepEqual(ggufArtifacts.map((artifact) => [artifact.filename, artifact.quantization, artifact.sizeBytes]), [["small.Q4_K_M.gguf", "Q4_K_M", 4_000_000_001], ["large.Q8.gguf", "Q8", 8_000_000_000]]);
+  assert.equal(mlxArtifact.sizeBytes, 3_200_000_000);
   assert.equal(normalizeModels([{ id: "org/bad", siblings: [{ rfilename: "tiny.gguf", size: 1 }] }], "gguf").length, 0);
+});
+test("keeps multiple GGUF quantization variants from one model family", () => {
+  const q4 = { ...gguf, quantization: "Q4_K_M" };
+  const q8 = { ...gguf, id: "org/Coder-7B-GGUF/model.Q8_0.gguf", filename: "model.Q8_0.gguf", quantization: "Q8_0", sizeBytes: 8_000_000_000, sizeGb: 8, sourceUrl: "https://huggingface.co/org/Coder-7B-GGUF/resolve/main/model.Q8_0.gguf" };
+  const ranked = rankArtifacts([q4, q8], mac);
+  assert.deepEqual(ranked.map((item) => item.quantization).sort(), ["Q4_K_M", "Q8_0"]);
+});
+test("labels IQ and full-precision GGUF variants", () => {
+  const artifacts = normalizeModels([{ id: "org/Precision-GGUF", siblings: [{ rfilename: "model.BF16.gguf", size: 9_000_000_000 }, { rfilename: "model.IQ3_XS.gguf", size: 3_000_000_000 }, { rfilename: "model.Q2_K.gguf", size: 2_000_000_000 }] }], "gguf");
+  assert.deepEqual(artifacts.map((artifact) => artifact.quantization), ["Q2_K", "IQ3_XS", "BF16"]);
 });
 test("retains only counts for invalid or unsupported catalogue candidates", () => {
   const counts = normalizationExclusions([{ id: "org/tiny", siblings: [{ rfilename: "tiny.gguf", size: 1 }] }, { id: "org/missing", siblings: [{ rfilename: "readme.md", size: 1_000_000_000 }] }], "gguf");
