@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chipProfiles, estimateMemoryGb, rankArtifacts, runtimeEligibility, validateConfig, type Artifact, type MacConfig } from "../lib/recommendations";
+import { chipProfiles, estimateMemoryGb, rankArtifacts, rankArtifactsWithExplanations, runtimeEligibility, validateConfig, type Artifact, type MacConfig } from "../lib/recommendations";
 import { CatalogueCache, isFresh } from "../lib/catalogue-cache";
-import { normalizeModels } from "../lib/catalogue";
+import { normalizationExclusions, normalizeModels } from "../lib/catalogue";
 import { createPostHandler } from "../app/api/recommendations/route";
 
 const mac: MacConfig = { chip: "m4", memoryGb: 16, diskGb: 12, workload: "coding" };
@@ -44,11 +44,28 @@ test("keeps fit tied to memory but changes pace and ranking by chip bandwidth", 
   assert.equal(highBandwidth[0].title, "Chat 8B");
 });
 test("names the exact GGUF file in links and runtime guidance", () => { const recommendation = rankArtifacts([gguf], mac)[0]; assert.equal(recommendation.sourceUrl, gguf.sourceUrl); assert.match(recommendation.guidance.find((guide) => guide.runtime === "llama.cpp")!.command, /model\.Q4_K_M\.gguf/); });
+test("returns typed fit explanations and actionable exclusion categories", () => {
+  const tooLarge = { ...gguf, id: "org/Large-GGUF/file.gguf", modelId: "org/Large-GGUF", sizeBytes: 13_000_000_000, sizeGb: 13 };
+  const tooHungry = { ...gguf, id: "org/Memory-GGUF/file.gguf", modelId: "org/Memory-GGUF", sizeBytes: 11_500_000_000, sizeGb: 11.5, paramsB: 100 };
+  const invalid = { ...gguf, id: "org/Invalid-GGUF/file.gguf", modelId: "org/Invalid-GGUF", sizeBytes: 0, sizeGb: 0 };
+  const result = rankArtifactsWithExplanations([gguf, tooLarge, tooHungry, invalid], mac);
+  assert.equal(result.exclusions.insufficientDisk, 1);
+  assert.equal(result.exclusions.insufficientMemory, 1);
+  assert.equal(result.exclusions.invalidSize, 1);
+  assert.equal(result.recommendations[0].explanation.fit.disk.availableBytes, 12_000_000_000);
+  assert.equal(result.recommendations[0].explanation.fit.memory.assumption.includes("4k-context"), true);
+  assert.equal(result.recommendations[0].explanation.fit.workload.category, "coding-oriented");
+  assert.ok(result.recommendations[0].explanation.rankingFactors.length >= 3);
+});
 test("normalizes exact GGUF and aggregate MLX artifact sizes", () => {
   const model = { id: "org/Test-GGUF", siblings: [{ rfilename: "large.Q8.gguf", size: 8_000_000_000 }, { rfilename: "small.Q4_K_M.gguf", size: 4_000_000_001 }, { rfilename: "weights.safetensors", size: 3_000_000_000 }, { rfilename: "config.json", size: 200_000_000 }] };
   const ggufArtifact = normalizeModels([model], "gguf")[0]; const mlxArtifact = normalizeModels([model], "mlx")[0];
   assert.equal(ggufArtifact.filename, "small.Q4_K_M.gguf"); assert.equal(ggufArtifact.sizeBytes, 4_000_000_001); assert.equal(mlxArtifact.sizeBytes, 3_200_000_000);
   assert.equal(normalizeModels([{ id: "org/bad", siblings: [{ rfilename: "tiny.gguf", size: 1 }] }], "gguf").length, 0);
+});
+test("retains only counts for invalid or unsupported catalogue candidates", () => {
+  const counts = normalizationExclusions([{ id: "org/tiny", siblings: [{ rfilename: "tiny.gguf", size: 1 }] }, { id: "org/missing", siblings: [{ rfilename: "readme.md", size: 1_000_000_000 }] }], "gguf");
+  assert.deepEqual(counts, { invalidSize: 1, unsupportedFormat: 1 });
 });
 test("cache coalesces concurrent refreshes, rejects invalid timestamps, and serves stale fallback", async () => {
   let calls = 0; let release!: () => void; const pending = new Promise<void>((resolve) => { release = resolve; });
@@ -60,11 +77,12 @@ test("cache coalesces concurrent refreshes, rejects invalid timestamps, and serv
   assert.equal((await stale.get()).stale, true);
 });
 test("API preserves status codes and returns typed input errors", async () => {
-  const handler = createPostHandler(async () => ({ recommendations: [], refreshedAt: "2026-08-01T00:00:00Z", stale: true }));
+  const response = { recommendations: [], exclusions: { insufficientDisk: 0, insufficientMemory: 0, invalidSize: 0, unsupportedFormat: 0 }, refreshedAt: "2026-08-01T00:00:00Z", stale: true };
+  const handler = createPostHandler(async () => response);
   const invalid = await handler(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify({ chip: "m4", memoryGb: 99, diskGb: 0, workload: "nope" }) }));
   assert.equal(invalid.status, 400); assert.ok((await invalid.json()).fieldErrors);
   const valid = await handler(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify(mac) }));
-  assert.deepEqual(await valid.json(), { recommendations: [], refreshedAt: "2026-08-01T00:00:00Z", stale: true });
+  assert.deepEqual(await valid.json(), response);
   const unavailable = createPostHandler(async () => { throw new Error("offline"); });
   assert.equal((await unavailable(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify(mac) }))).status, 503);
 });

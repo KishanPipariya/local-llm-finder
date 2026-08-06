@@ -68,7 +68,25 @@ export type Recommendation = Artifact & {
   why: string;
   notes: string[];
   guidance: { runtime: string; command: string }[];
+  explanation: RecommendationExplanation;
 };
+
+export type WorkloadCategory = "coding-oriented" | "general chat" | "mixed";
+export type RecommendationExplanation = {
+  fit: {
+    disk: { availableBytes: number; headroomBytes: number };
+    memory: { availableGb: number; headroomGb: number; assumption: string };
+    runtimes: Recommendation["runtimes"];
+    workload: { category: WorkloadCategory; relevance: string };
+    pace: { bandwidthGbps: number; inputs: string };
+  };
+  rankingFactors: string[];
+  familyKey: string;
+};
+
+export type ExclusionReason = "insufficientDisk" | "insufficientMemory" | "invalidSize" | "unsupportedFormat";
+export type ExclusionSummary = Record<ExclusionReason, number>;
+export type RankingResult = { recommendations: Recommendation[]; exclusions: ExclusionSummary };
 
 const workloads = ["chat", "coding", "balanced"] as const;
 
@@ -115,6 +133,27 @@ function modelScore(item: Artifact, config: MacConfig, memoryGb: number): number
   return capacity + pace + work + Math.min(12, Math.log10(item.downloads + 1) * 2);
 }
 
+function workloadCategory(item: Artifact): WorkloadCategory {
+  const metadata = `${item.title} ${item.tags.join(" ")}`.toLowerCase();
+  if (/code|coder|programming/.test(metadata)) return "coding-oriented";
+  if (/instruct|chat|assistant|conversation/.test(metadata)) return "general chat";
+  return "mixed";
+}
+
+function workloadRelevance(category: WorkloadCategory, workload: MacConfig["workload"]): string {
+  if (workload === "balanced") return category === "mixed" ? "A balanced metadata signal for chat and coding." : `Useful for a balanced shortlist; metadata suggests ${category}.`;
+  if (workload === "coding") return category === "coding-oriented" ? "Metadata suggests coding-oriented use." : "Included as a general-purpose option; its metadata is not coding-oriented.";
+  return category === "coding-oriented" ? "Included for chat, though its metadata is coding-oriented." : "Metadata suggests general chat or mixed use.";
+}
+
+function familyKey(item: Artifact) {
+  return item.modelId.replace(/-(GGUF|MLX|[Qq]\d[^/]*)$/i, "");
+}
+
+function emptyExclusions(): ExclusionSummary {
+  return { insufficientDisk: 0, insufficientMemory: 0, invalidSize: 0, unsupportedFormat: 0 };
+}
+
 export function buildGuidance(item: Artifact, runtimes: Recommendation["runtimes"]): Recommendation["guidance"] {
   const q = item.quantization ? ` (${item.quantization})` : "";
   const artifact = item.filename ? `${item.modelId}/${item.filename}` : item.modelId;
@@ -126,12 +165,16 @@ export function buildGuidance(item: Artifact, runtimes: Recommendation["runtimes
   });
 }
 
-export function rankArtifacts(artifacts: Artifact[], config: MacConfig): Recommendation[] {
+export function rankArtifactsWithExplanations(artifacts: Artifact[], config: MacConfig): RankingResult {
   const profile = chipProfiles[config.chip];
+  const exclusions = emptyExclusions();
   const eligible = artifacts.flatMap((item) => {
     const runtimes = runtimeEligibility(config, item);
     const memoryGb = estimateMemoryGb(item);
-    if (!runtimes.length || !Number.isSafeInteger(item.sizeBytes) || item.sizeBytes <= 0 || item.sizeBytes > config.diskGb * 1e9 || memoryGb > config.memoryGb) return [];
+    if (!Number.isSafeInteger(item.sizeBytes) || item.sizeBytes <= 0) { exclusions.invalidSize += 1; return []; }
+    if (!runtimes.length) { exclusions.unsupportedFormat += 1; return []; }
+    if (item.sizeBytes > config.diskGb * 1e9) { exclusions.insufficientDisk += 1; return []; }
+    if (memoryGb > config.memoryGb) { exclusions.insufficientMemory += 1; return []; }
     const tight = memoryGb > config.memoryGb * 0.82;
     const slow = memoryGb > config.memoryGb * 0.94;
     const notes: string[] = [];
@@ -140,12 +183,25 @@ export function rankArtifacts(artifacts: Artifact[], config: MacConfig): Recomme
     if (item.gated) notes.push("Gated: accept the model licence and sign in to Hugging Face first.");
     const performance: Recommendation["performance"] = slow ? "Likely slow" : tight ? "Tight memory" : "Comfortable";
     const pace = expectedPace(profile, memoryGb);
-    return [{ ...item, runtimes, memoryGb, performance, pace, notes, why: `${item.paramsB ? `${item.paramsB}B parameters` : "A current compact model"}; ${profile.name}'s ${profile.bandwidthGbps} GB/s memory bandwidth suggests ${pace.toLowerCase()} expected pace for this footprint${config.workload === "coding" ? ", with coding-oriented ranking" : ""}.`, guidance: buildGuidance(item, runtimes) }];
+    const category = workloadCategory(item);
+    const diskHeadroom = Math.round((config.diskGb * 1e9 - item.sizeBytes) / 1e6) * 1e6;
+    const memoryHeadroom = Math.round((config.memoryGb - memoryGb) * 10) / 10;
+    const rankingFactors = [
+      workloadRelevance(category, config.workload),
+      `${item.paramsB ? `${item.paramsB}B parameter metadata` : "Artifact footprint"} contributes to capacity ranking.`,
+      `${profile.name}'s ${profile.bandwidthGbps} GB/s memory bandwidth contributes to the qualitative pace estimate.`,
+      "Download count is used as a light popularity signal, not a quality benchmark.",
+    ];
+    return [{ ...item, runtimes, memoryGb, performance, pace, notes, why: `${item.paramsB ? `${item.paramsB}B parameters` : "A current compact model"}; ${workloadRelevance(category, config.workload)} ${profile.name}'s ${profile.bandwidthGbps} GB/s memory bandwidth suggests ${pace.toLowerCase()} expected pace for this footprint.`, guidance: buildGuidance(item, runtimes), explanation: { fit: { disk: { availableBytes: config.diskGb * 1e9, headroomBytes: diskHeadroom }, memory: { availableGb: config.memoryGb, headroomGb: memoryHeadroom, assumption: "File mapping plus conservative runtime, 4k-context, and KV-cache overhead." }, runtimes, workload: { category, relevance: workloadRelevance(category, config.workload) }, pace: { bandwidthGbps: profile.bandwidthGbps, inputs: "Published family memory bandwidth relative to estimated model memory." } }, rankingFactors, familyKey: familyKey(item) } }];
   });
   const grouped = new Map<string, Recommendation>();
   for (const item of eligible.sort((a, b) => modelScore(b, config, b.memoryGb) - modelScore(a, config, a.memoryGb))) {
-    const key = item.modelId.replace(/-(GGUF|MLX|[Qq]\d[^/]*)$/i, "");
+    const key = item.explanation.familyKey;
     if (!grouped.has(key)) grouped.set(key, item);
   }
-  return [...grouped.values()].slice(0, 10);
+  return { recommendations: [...grouped.values()].slice(0, 10), exclusions };
+}
+
+export function rankArtifacts(artifacts: Artifact[], config: MacConfig): Recommendation[] {
+  return rankArtifactsWithExplanations(artifacts, config).recommendations;
 }

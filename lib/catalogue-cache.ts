@@ -1,6 +1,6 @@
-import type { Artifact } from "./recommendations";
+import type { Artifact, ExclusionSummary } from "./recommendations";
 
-export type Catalogue = { items: Artifact[]; refreshedAt: string };
+export type Catalogue = { items: Artifact[]; refreshedAt: string; exclusions?: Partial<ExclusionSummary> };
 export type CatalogueState = Catalogue | undefined;
 
 export class CatalogueCache {

@@ -1,5 +1,5 @@
 import { CatalogueCache, type Catalogue } from "./catalogue-cache";
-import type { Artifact } from "./recommendations";
+import type { Artifact, ExclusionSummary } from "./recommendations";
 
 const MIN_ARTIFACT_BYTES = 100_000_000;
 const REQUEST_TIMEOUT_MS = 12_000;
@@ -73,6 +73,16 @@ export function normalizeModels(models: HubModel[], format: Artifact["format"]):
   });
 }
 
+export function normalizationExclusions(models: HubModel[], format: Artifact["format"]): Partial<ExclusionSummary> {
+  return models.reduce<Partial<ExclusionSummary>>((counts, model) => {
+    const files = Array.isArray(model.siblings) ? model.siblings.filter((file): file is HubFile => Boolean(file) && typeof file.rfilename === "string") : [];
+    const matched = format === "gguf" ? files.filter((file) => /\.gguf$/i.test(file.rfilename)) : files.filter((file) => /config\.json$|\.safetensors$/i.test(file.rfilename));
+    if (!matched.length) counts.unsupportedFormat = (counts.unsupportedFormat ?? 0) + 1;
+    else if (!normalizeModels([model], format).length) counts.invalidSize = (counts.invalidSize ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
 async function fetchJson(url: string, fetcher: FetchLike): Promise<unknown> {
   const response = await fetcher(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
   if (!response.ok) throw new Error(`Hugging Face request failed (${response.status})`);
@@ -109,12 +119,13 @@ export async function retrieveCatalogue(fetcher: FetchLike = fetch): Promise<Cat
       return isHubModel(detail) ? detail : model;
     } catch { return model; }
   });
-  const items = [
-    ...normalizeModels(details.filter((model) => ggufList.some((listed) => listed.id === model.id)), "gguf"),
-    ...normalizeModels(details.filter((model) => mlxList.some((listed) => listed.id === model.id)), "mlx"),
-  ];
+  const ggufModels = details.filter((model) => ggufList.some((listed) => listed.id === model.id));
+  const mlxModels = details.filter((model) => mlxList.some((listed) => listed.id === model.id));
+  const items = [...normalizeModels(ggufModels, "gguf"), ...normalizeModels(mlxModels, "mlx")];
   if (!items.length) throw new Error("Hugging Face returned no usable artifacts");
-  return { items, refreshedAt: new Date().toISOString() };
+  const ggufExclusions = normalizationExclusions(ggufModels, "gguf");
+  const mlxExclusions = normalizationExclusions(mlxModels, "mlx");
+  return { items, refreshedAt: new Date().toISOString(), exclusions: { invalidSize: (ggufExclusions.invalidSize ?? 0) + (mlxExclusions.invalidSize ?? 0), unsupportedFormat: (ggufExclusions.unsupportedFormat ?? 0) + (mlxExclusions.unsupportedFormat ?? 0) } };
 }
 
 const cache = new CatalogueCache(retrieveCatalogue);

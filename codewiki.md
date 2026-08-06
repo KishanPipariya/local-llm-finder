@@ -13,12 +13,12 @@ request, and renders recommendations without requiring client-side JavaScript.
 Browser GET /?chip=…&memoryGb=…&diskGb=…&workload=…
   -> app/page.tsx validates the query
   -> lib/recommendation-service.ts obtains the catalogue and ranks artifacts
-  -> server-rendered FinderForm and Results response
+  -> server-rendered FinderForm and Results response, including typed fit explanations and exclusion counts
 
 Browser POST /api/recommendations (same configuration JSON)
   -> app/api/recommendations/route.ts validates the body
   -> the same recommendation service
-  -> JSON result, 400 validation error, or 503 catalogue error
+  -> the same JSON result (including fit explanations and exclusion counts), 400 validation error, or 503 catalogue error
 ```
 
 `app/page.tsx` is intentionally a server component. Its query parameters make
@@ -39,8 +39,8 @@ fallback flow.
 | `app/page.tsx` | Parses GET query values, validates them, retrieves results, and renders page-level errors. |
 | `app/components/finder-form.tsx` | Accessible configuration form and field-level validation messages. |
 | `app/components/hardware-selector.tsx` | Client-side chip/memory filtering and accessible automatic-adjustment announcement. |
-| `app/components/results.tsx` | Results heading, stale-catalogue notice, empty state, and pace disclaimer. |
-| `app/components/recommendation-card.tsx` | Recommendation details, Hugging Face link, and runtime guidance. |
+| `app/components/results.tsx` | Results heading, plain-language catalogue status, pace disclaimer, and actionable exclusion disclosure. |
+| `app/components/recommendation-card.tsx` | Recommendation fit explanation, technical/ranking disclosure, Hugging Face link, and runtime guidance. |
 | `app/api/recommendations/route.ts` | Node.js POST JSON endpoint; exposes `createPostHandler` for testing. |
 | `lib/recommendations.ts` | Pure validation, memory and pace estimates, eligibility, scoring, ranking, and guidance. |
 | `lib/recommendation-service.ts` | Composition layer joining catalogue retrieval to ranking. |
@@ -80,7 +80,18 @@ smaller-than-100 MB artifacts.
 
 The ranking score combines model capacity, workload fit, a qualitative pace
 factor, and download popularity. It keeps the highest-ranked representative of
-each normalized model family and returns at most ten results.
+each normalized model family and returns at most ten results. Every returned
+recommendation includes typed fit checks (disk and memory headroom, compatible
+runtimes, workload category, and pace inputs), ranking contributors, and its
+normalized family key. Workload metadata is presented only as coding-oriented,
+general chat, or mixed—not as a capability benchmark.
+
+The recommendation result also includes an `exclusions` count by reason. Counts
+include candidates rejected during Hugging Face normalization, but never expose
+the rejected artifact metadata. The
+UI only exposes reasons with a non-zero count and offers safe next actions for
+disk, memory, unsupported-format, and invalid-size constraints. Invalid sizes
+remain excluded and are never shown as installable artifacts.
 
 ### Pace and memory language
 
