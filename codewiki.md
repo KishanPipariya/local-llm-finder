@@ -73,14 +73,19 @@ smaller-than-100 MB artifacts.
 - GGUF: retain every valid `.gguf` file as a separate quantization variant (Q2–Q8,
   IQ variants, and F16/BF16/F32 labels when present). It supports Ollama, LM
   Studio, and llama.cpp.
-- MLX: add valid `config.json` and `.safetensors` file sizes. It supports MLX.
+- MLX: add known positive weights, configuration, and tokenizer runtime-file
+  sizes, then require the aggregate artifact to meet the 100 MB minimum. A
+  missing size for any recognized required runtime file excludes the artifact.
+  It supports MLX.
 - Disk fit is strict: the exact byte size must be no greater than free disk.
 - Memory estimate adds conservative file-mapping, runtime, and context overhead.
   A model is omitted when the estimate exceeds unified memory.
 - Gated models remain eligible, but carry a sign-in and licence-acceptance note.
 
-The ranking score combines model capacity, workload fit, a qualitative pace
-factor, and download popularity. It keeps the highest-ranked representative of
+The ranking score combines parameter metadata when available, workload fit, a
+qualitative pace factor, a small bounded update-recency signal, and download
+popularity. Download footprint is never treated as a parameter-count proxy.
+It keeps the highest-ranked representative of
 each normalized model-family/format/quantization variant and returns at most ten results. Every returned
 recommendation includes typed fit checks (disk and memory headroom, compatible
 runtimes, workload category, and pace inputs), ranking contributors, and its
@@ -112,7 +117,9 @@ the full refresh.
 
 `CatalogueCache` holds the last valid normalized catalogue in memory for six
 hours. Concurrent callers share one refresh promise. If a later refresh fails
-and a previous catalogue exists, it returns that catalogue with `stale: true`.
+and a previous catalogue exists, it returns that catalogue with `stale: true`
+and waits five minutes before the next refresh attempt, avoiding repeated
+upstream calls during an outage.
 If no valid catalogue has ever been acquired, the error is propagated:
 
 | Entry point | Invalid configuration | No catalogue available |
@@ -125,7 +132,7 @@ request is part of this design.
 
 ## Development and verification
 
-Requires Node.js 22.x and npm.
+Requires Node.js 26.x and npm.
 
 ```bash
 npm install
@@ -137,7 +144,13 @@ npm run build
 
 Run all three verification commands for relevant changes. `npm test` includes
 both the Node test suite and the Playwright/axe accessibility suite; the latter
-starts a local Next.js development server on port 3199.
+builds the app and starts a local production Next.js server on port 3199. Its
+no-JavaScript flow validates the server-rendered GET error path without calling
+the external catalogue.
+
+Use Node 26.x (`.nvmrc` is provided). GitHub Actions installs that version,
+installs Chromium for Playwright, and runs the full verification set on pushes
+and pull requests.
 
 When changing visible finder UI, also follow
 [`docs/accessibility-release-checklist.md`](docs/accessibility-release-checklist.md).

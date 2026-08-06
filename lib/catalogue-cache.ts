@@ -6,19 +6,30 @@ export type CatalogueState = Catalogue | undefined;
 export class CatalogueCache {
   private state: CatalogueState;
   private refreshInFlight: Promise<Catalogue> | undefined;
+  private retryAfter = 0;
 
-  constructor(private readonly refresh: () => Promise<Catalogue>, private readonly maxAge = 6 * 60 * 60 * 1000, private readonly clock = () => Date.now()) {}
+  constructor(
+    private readonly refresh: () => Promise<Catalogue>,
+    private readonly maxAge = 6 * 60 * 60 * 1000,
+    private readonly clock = () => Date.now(),
+    private readonly retryDelay = 5 * 60 * 1000,
+  ) {}
 
   async get(): Promise<{ catalogue: Catalogue; stale: boolean }> {
     const now = this.clock();
     if (this.state && isFresh(this.state, now, this.maxAge)) return { catalogue: this.state, stale: false };
+    if (this.state && now < this.retryAfter) return { catalogue: this.state, stale: true };
     if (!this.refreshInFlight) this.refreshInFlight = this.refresh().finally(() => { this.refreshInFlight = undefined; });
     try {
       const catalogue = await this.refreshInFlight;
       this.state = catalogue;
+      this.retryAfter = 0;
       return { catalogue, stale: false };
     } catch (error) {
-      if (this.state) return { catalogue: this.state, stale: true };
+      if (this.state) {
+        this.retryAfter = this.clock() + this.retryDelay;
+        return { catalogue: this.state, stale: true };
+      }
       throw error;
     }
   }

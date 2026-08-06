@@ -58,17 +58,26 @@ test("returns typed fit explanations and actionable exclusion categories", () =>
   assert.ok(result.recommendations[0].explanation.rankingFactors.length >= 3);
 });
 test("normalizes exact GGUF and aggregate MLX artifact sizes", () => {
-  const model = { id: "org/Test-GGUF", siblings: [{ rfilename: "large.Q8.gguf", size: 8_000_000_000 }, { rfilename: "small.Q4_K_M.gguf", size: 4_000_000_001 }, { rfilename: "weights.safetensors", size: 3_000_000_000 }, { rfilename: "config.json", size: 200_000_000 }] };
+  const model = { id: "org/Test-GGUF", siblings: [{ rfilename: "large.Q8.gguf", size: 8_000_000_000 }, { rfilename: "small.Q4_K_M.gguf", size: 4_000_000_001 }, { rfilename: "weights.safetensors", size: 3_000_000_000 }, { rfilename: "config.json", size: 12_000 }, { rfilename: "tokenizer.json", size: 8_000 }, { rfilename: "README.md", size: 900_000_000 }] };
   const ggufArtifacts = normalizeModels([model], "gguf"); const mlxArtifact = normalizeModels([model], "mlx")[0];
   assert.deepEqual(ggufArtifacts.map((artifact) => [artifact.filename, artifact.quantization, artifact.sizeBytes]), [["small.Q4_K_M.gguf", "Q4_K_M", 4_000_000_001], ["large.Q8.gguf", "Q8", 8_000_000_000]]);
-  assert.equal(mlxArtifact.sizeBytes, 3_200_000_000);
+  assert.equal(mlxArtifact.sizeBytes, 3_000_020_000);
   assert.equal(normalizeModels([{ id: "org/bad", siblings: [{ rfilename: "tiny.gguf", size: 1 }] }], "gguf").length, 0);
+  assert.equal(normalizeModels([{ id: "org/unknown-tokenizer", siblings: [{ rfilename: "weights.safetensors", size: 3_000_000_000 }, { rfilename: "tokenizer.json" }] }], "mlx").length, 0);
 });
 test("keeps multiple GGUF quantization variants from one model family", () => {
   const q4 = { ...gguf, quantization: "Q4_K_M" };
   const q8 = { ...gguf, id: "org/Coder-7B-GGUF/model.Q8_0.gguf", filename: "model.Q8_0.gguf", quantization: "Q8_0", sizeBytes: 8_000_000_000, sizeGb: 8, sourceUrl: "https://huggingface.co/org/Coder-7B-GGUF/resolve/main/model.Q8_0.gguf" };
   const ranked = rankArtifacts([q4, q8], mac);
   assert.deepEqual(ranked.map((item) => item.quantization).sort(), ["Q4_K_M", "Q8_0"]);
+});
+test("does not infer model capacity from a download footprint and rewards maintained entries", () => {
+  const typed = { ...gguf, id: "org/Typed-GGUF/model.gguf", modelId: "org/Typed-GGUF", title: "Typed 3B", paramsB: 3, sizeBytes: 3_000_000_000, sizeGb: 3, downloads: 100, tags: [], updatedAt: new Date().toISOString() };
+  const untypedLarge = { ...gguf, id: "org/Untyped-GGUF/model.gguf", modelId: "org/Untyped-GGUF", title: "Untyped", paramsB: undefined, sizeBytes: 10_000_000_000, sizeGb: 10, downloads: 100, tags: [], updatedAt: new Date().toISOString() };
+  const stale = { ...typed, id: "org/Stale-GGUF/model.gguf", modelId: "org/Stale-GGUF", title: "Stale 3B", updatedAt: "2020-01-01T00:00:00Z" };
+  const ranked = rankArtifacts([untypedLarge, stale, typed], { ...mac, workload: "balanced" });
+  assert.equal(ranked[0].title, "Typed 3B");
+  assert.ok(ranked.findIndex((item) => item.id === typed.id) < ranked.findIndex((item) => item.id === stale.id));
 });
 test("labels IQ and full-precision GGUF variants", () => {
   const artifacts = normalizeModels([{ id: "org/Precision-GGUF", siblings: [{ rfilename: "model.BF16.gguf", size: 9_000_000_000 }, { rfilename: "model.IQ3_XS.gguf", size: 3_000_000_000 }, { rfilename: "model.Q2_K.gguf", size: 2_000_000_000 }] }], "gguf");
@@ -78,14 +87,20 @@ test("retains only counts for invalid or unsupported catalogue candidates", () =
   const counts = normalizationExclusions([{ id: "org/tiny", siblings: [{ rfilename: "tiny.gguf", size: 1 }] }, { id: "org/missing", siblings: [{ rfilename: "readme.md", size: 1_000_000_000 }] }], "gguf");
   assert.deepEqual(counts, { invalidSize: 1, unsupportedFormat: 1 });
 });
-test("cache coalesces concurrent refreshes, rejects invalid timestamps, and serves stale fallback", async () => {
+test("cache coalesces concurrent refreshes, rejects invalid timestamps, and backs off stale refresh retries", async () => {
   let calls = 0; let release!: () => void; const pending = new Promise<void>((resolve) => { release = resolve; });
   const cache = new CatalogueCache(async () => { calls += 1; await pending; return { items: [gguf], refreshedAt: "2026-08-01T00:00:00Z" }; }, 1, () => Date.parse("2026-08-01T00:00:00Z"));
   const first = cache.get(); const second = cache.get(); release(); assert.equal((await first).stale, false); assert.equal((await second).stale, false); assert.equal(calls, 1);
   assert.equal(isFresh({ items: [], refreshedAt: "not-a-date" }), false);
-  const stale = new CatalogueCache(async () => { throw new Error("offline"); }, 1, () => Date.parse("2026-08-02T00:00:00Z"));
+  let staleCalls = 0; let now = Date.parse("2026-08-02T00:00:00Z");
+  const stale = new CatalogueCache(async () => { staleCalls += 1; throw new Error("offline"); }, 1, () => now, 60_000);
   (stale as unknown as { state: { items: Artifact[]; refreshedAt: string } }).state = { items: [gguf], refreshedAt: "2026-08-01T00:00:00Z" };
   assert.equal((await stale.get()).stale, true);
+  assert.equal((await stale.get()).stale, true);
+  assert.equal(staleCalls, 1);
+  now += 60_000;
+  assert.equal((await stale.get()).stale, true);
+  assert.equal(staleCalls, 2);
 });
 test("API preserves status codes and returns typed input errors", async () => {
   const response = { recommendations: [], exclusions: { insufficientDisk: 0, insufficientMemory: 0, invalidSize: 0, unsupportedFormat: 0 }, refreshedAt: "2026-08-01T00:00:00Z", stale: true };

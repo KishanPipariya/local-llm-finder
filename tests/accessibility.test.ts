@@ -5,7 +5,7 @@ import { chromium, type BrowserContext, type Page } from "playwright";
 import { chipProfiles } from "../lib/recommendations.js";
 
 const port = 3199;
-const origin = `http://127.0.0.1:${port}`;
+const origin = `http://localhost:${port}`;
 
 async function waitForPage(context: BrowserContext): Promise<Page> {
   const page = await context.newPage();
@@ -21,7 +21,7 @@ async function assertNoAxeViolations(page: Page, state: string) {
   assert.deepEqual(results.violations, [], `axe violations on ${state}: ${results.violations.map((v) => `${v.id}: ${v.help}`).join("; ")}`);
 }
 
-const server = spawn(process.execPath, ["node_modules/next/dist/bin/next", "dev", "--port", String(port)], { stdio: "ignore" });
+const server = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "--port", String(port)], { stdio: "ignore" });
 server.unref();
 process.once("exit", () => server.kill("SIGTERM"));
 const browser = await chromium.launch();
@@ -43,6 +43,7 @@ try {
     assert.deepEqual(await initial.locator("#memoryGb option").evaluateAll((options) => options.map((option) => option.getAttribute("value"))), profile.memoryOptionsGb.map(String), `${profile.name} exposes only its supported memory options`);
   }
 
+  await initial.locator("#chip").selectOption("m4");
   await initial.locator("#memoryGb").selectOption("16");
   await initial.locator("#chip").selectOption("m4Pro");
   assert.equal(await initial.locator("#memoryGb").inputValue(), "24");
@@ -86,11 +87,14 @@ try {
   const noScriptContext = await browser.newContext({ javaScriptEnabled: false });
   const noScript = await noScriptContext.newPage();
   await noScript.goto(origin, { waitUntil: "domcontentloaded" });
+  await noScript.locator("#chip").selectOption("m4Pro");
+  await noScript.locator("#memoryGb").selectOption("16");
   await noScript.locator("#diskGb").fill("12");
-  await noScript.getByRole("button", { name: "Find compatible models" }).click();
-  await noScript.waitForURL(/diskGb=12/);
-  assert.match(noScript.url(), /chip=m4/);
-  assert.ok(await noScript.locator("#results").count(), "server-rendered results are visible without JavaScript");
+  await noScript.getByRole("button", { name: "Find compatible models" }).click({ force: true, noWaitAfter: true });
+  await noScript.waitForURL(/memoryGb=16/);
+  assert.match(noScript.url(), /chip=m4Pro/);
+  assert.ok(await noScript.locator(".error-summary").count(), "server-rendered validation is visible without JavaScript");
+  assert.equal(await noScript.locator("#results").count(), 0);
   await noScriptContext.close();
   await narrowDarkContext.close();
   await darkContext.close();

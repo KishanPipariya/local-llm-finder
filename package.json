@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": "22.x"
+    "node": "26.x"
   },
   "scripts": {
     "dev": "next dev",
@@ -11,7 +11,7 @@
     "start": "next start",
     "test": "npm run test:unit && npm run test:a11y",
     "test:unit": "tsx --test --test-concurrency=4 tests/recommendations.test.ts",
-    "test:a11y": "tsx --test --test-concurrency=4 tests/accessibility.test.ts",
+    "test:a11y": "npm run build && tsx --test --test-concurrency=4 tests/accessibility.test.ts",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
   },
   "dependencies": {
@@ -21,15 +21,15 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",
-    "@types/node": "22.19.19",
+    "@types/node": "^26.1.2",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.6",
     "playwright": "^1.62.1",
+    "react-server-dom-webpack": "19.2.6",
     "tsx": "^4.22.1",
-    "typescript": "5.9.3",
-    "react-server-dom-webpack": "19.2.6"
+    "typescript": "5.9.3"
   },
   "type": "module"
 }

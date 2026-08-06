@@ -12,7 +12,7 @@ Your Mac configuration is used only to produce the suggestions—it is not saved
 
 ## Run locally
 
-You need Node.js 22 or newer.
+You need Node.js 26.x.
 
 ```bash
 npm install

@@ -25,6 +25,8 @@ const params = (value: unknown, text: string): number | undefined => {
 };
 const titleOf = (id: string) => id.split("/").at(-1)?.replace(/-(GGUF|MLX)$/i, "") ?? id;
 const validSize = (size: unknown): size is number => typeof size === "number" && Number.isSafeInteger(size) && size >= MIN_ARTIFACT_BYTES;
+const knownFileSize = (size: unknown): size is number => typeof size === "number" && Number.isSafeInteger(size) && size > 0;
+const isMlxRuntimeFile = (filename: string) => /(?:^|\/)(?:[^/]+\.safetensors|[^/]+\.safetensors\.index\.json|(?:config|generation_config|tokenizer(?:_config)?|special_tokens_map|added_tokens|preprocessor_config|processor_config|vocab)\.json|[^/]+\.model|chat_template\.jinja|merges\.txt|[^/]+\.tiktoken)$/i.test(filename);
 const repoUrl = (id: string) => `https://huggingface.co/${id}`;
 const fileUrl = (id: string, filename: string) => `${repoUrl(id)}/resolve/main/${filename.split("/").map(encodeURIComponent).join("/")}`;
 
@@ -51,10 +53,13 @@ function quantizationOf(filename: string) {
 export function normalizeModels(models: HubModel[], format: Artifact["format"]): Artifact[] {
   return models.flatMap((model) => {
     const files = Array.isArray(model.siblings) ? model.siblings.filter((file): file is HubFile => Boolean(file) && typeof file.rfilename === "string") : [];
-    const matched = format === "gguf" ? files.filter((file) => /\.gguf$/i.test(file.rfilename)) : files.filter((file) => /config\.json$|\.safetensors$/i.test(file.rfilename));
+    const matched = format === "gguf" ? files.filter((file) => /\.gguf$/i.test(file.rfilename)) : files.filter((file) => isMlxRuntimeFile(file.rfilename));
     const selectedFiles = format === "gguf" ? validGgufFiles(matched) : [undefined];
     if (format === "gguf" && !selectedFiles.length) return [];
-    const sizeBytes = format === "gguf" ? undefined : matched.reduce((sum, file) => validSize(file.size) ? sum + file.size : Number.NaN, 0);
+    // MLX runtimes need weights plus configuration and tokenizer assets. Include
+    // every known runtime file and reject an aggregate if any required size is
+    // missing, so the displayed disk check remains conservative.
+    const sizeBytes = format === "gguf" ? undefined : matched.reduce((sum, file) => knownFileSize(file.size) ? sum + file.size : Number.NaN, 0);
     if (format === "mlx" && !validSize(sizeBytes)) return [];
     return selectedFiles.flatMap((selected) => {
       const artifactSize = format === "gguf" ? selected!.size : sizeBytes;
@@ -69,7 +74,7 @@ export function normalizeModels(models: HubModel[], format: Artifact["format"]):
         sizeGb: Math.round((artifactSize / 1e9) * 10) / 10,
         paramsB: params(model.cardData?.params, `${model.id} ${(model.tags ?? []).join(" ")}`),
         quantization: filename ? quantizationOf(filename) : undefined,
-        downloads: Number.isFinite(model.downloads) ? model.downloads! : 0,
+        downloads: typeof model.downloads === "number" && Number.isFinite(model.downloads) && model.downloads >= 0 ? model.downloads : 0,
         updatedAt: typeof model.lastModified === "string" ? model.lastModified : new Date(0).toISOString(),
         licence: model.cardData?.license,
         gated: Boolean(model.gated),
@@ -85,7 +90,7 @@ export function normalizeModels(models: HubModel[], format: Artifact["format"]):
 export function normalizationExclusions(models: HubModel[], format: Artifact["format"]): Partial<ExclusionSummary> {
   return models.reduce<Partial<ExclusionSummary>>((counts, model) => {
     const files = Array.isArray(model.siblings) ? model.siblings.filter((file): file is HubFile => Boolean(file) && typeof file.rfilename === "string") : [];
-    const matched = format === "gguf" ? files.filter((file) => /\.gguf$/i.test(file.rfilename)) : files.filter((file) => /config\.json$|\.safetensors$/i.test(file.rfilename));
+    const matched = format === "gguf" ? files.filter((file) => /\.gguf$/i.test(file.rfilename)) : files.filter((file) => isMlxRuntimeFile(file.rfilename));
     if (!matched.length) counts.unsupportedFormat = (counts.unsupportedFormat ?? 0) + 1;
     else if (!normalizeModels([model], format).length) counts.invalidSize = (counts.invalidSize ?? 0) + 1;
     return counts;
