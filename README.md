@@ -2,10 +2,6 @@
 
 A privacy-first finder for current local chat and coding models that fit a Mac. It queries Hugging Face server-side, caches the normalized catalogue for six hours, and makes no attempt to store submitted Mac configurations. The finder is a server-rendered GET form, so it returns recommendations even when JavaScript is disabled.
 
-## Deploy on Vercel
-
-Import this repository in Vercel, leave the framework preset as **Next.js**, and deploy. No environment variables, database, or account integrations are required.
-
 ## Local development
 
 Requires Node.js 22.13 or newer.
