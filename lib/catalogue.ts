@@ -20,6 +20,7 @@ export type HubModel = {
 };
 
 type FetchLike = typeof fetch;
+type UnknownRecord = Record<string, unknown>;
 
 const params = (value: unknown, text: string): number | undefined => {
   const match = String(value ?? text).match(/(\d+(?:\.\d+)?)\s*[bB](?:illion)?\b/);
@@ -32,13 +33,77 @@ const isMlxRuntimeFile = (filename: string) => /(?:^|\/)(?:[^/]+\.safetensors|[^
 const repoUrl = (id: string) => `https://huggingface.co/${id}`;
 const fileUrl = (id: string, filename: string) => `${repoUrl(id)}/resolve/main/${filename.split("/").map(encodeURIComponent).join("/")}`;
 
+function asRecord(value: unknown): UnknownRecord | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as UnknownRecord : undefined;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function asFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeHubFile(value: unknown): HubFile | undefined {
+  const file = asRecord(value);
+  if (!file) return undefined;
+  const rfilename = asString(file.rfilename);
+  if (!rfilename) return undefined;
+  const size = asFiniteNumber(file.size);
+  return size === undefined ? { rfilename } : { rfilename, size };
+}
+
+function normalizeCardData(value: unknown): HubModel["cardData"] | undefined {
+  const cardData = asRecord(value);
+  if (!cardData) return undefined;
+  const license = asString(cardData.license);
+  const modelName = asString(cardData.model_name);
+  const rawParams = cardData.params;
+  const params = typeof rawParams === "string" || typeof rawParams === "number" ? rawParams : undefined;
+  return license === undefined && modelName === undefined && params === undefined
+    ? undefined
+    : { license, model_name: modelName, params };
+}
+
+export function normalizeHubModel(value: unknown): HubModel | undefined {
+  const model = asRecord(value);
+  if (!model) return undefined;
+  const id = asString(model.id);
+  if (!id) return undefined;
+  const downloads = asFiniteNumber(model.downloads);
+  const lastModified = asString(model.lastModified);
+  const gated = typeof model.gated === "boolean" || typeof model.gated === "string" ? model.gated : undefined;
+  const tags = Array.isArray(model.tags) ? model.tags.filter((tag): tag is string => typeof tag === "string") : undefined;
+  const pipelineTag = asString(model.pipeline_tag);
+  const siblings = Array.isArray(model.siblings)
+    ? model.siblings.map(normalizeHubFile).filter((file): file is HubFile => file !== undefined)
+    : undefined;
+  return {
+    id,
+    downloads,
+    lastModified,
+    gated,
+    tags,
+    pipeline_tag: pipelineTag,
+    cardData: normalizeCardData(model.cardData),
+    siblings,
+  };
+}
+
 export function isHubModel(value: unknown): value is HubModel {
-  return Boolean(value) && typeof value === "object" && typeof (value as { id?: unknown }).id === "string";
+  return normalizeHubModel(value) !== undefined;
 }
 
 export function parseHubModelList(value: unknown): HubModel[] {
-  if (!Array.isArray(value) || !value.every(isHubModel)) throw new Error("Hugging Face returned an invalid model list");
-  return value;
+  if (!Array.isArray(value)) throw new Error("Hugging Face returned an invalid model list");
+  const models = value.map(normalizeHubModel).filter((model): model is HubModel => model !== undefined);
+  if (!models.length) throw new Error("Hugging Face returned an invalid model list");
+  return models;
+}
+
+function modelFiles(model: HubModel): HubFile[] {
+  return model.siblings ?? [];
 }
 
 function validGgufFiles(files: HubFile[]) {
@@ -54,7 +119,7 @@ function quantizationOf(filename: string) {
 
 export function normalizeModels(models: HubModel[], format: Artifact["format"]): Artifact[] {
   return models.flatMap((model) => {
-    const files = Array.isArray(model.siblings) ? model.siblings.filter((file): file is HubFile => Boolean(file) && typeof file.rfilename === "string") : [];
+    const files = modelFiles(model);
     const matched = format === "gguf" ? files.filter((file) => /\.gguf$/i.test(file.rfilename)) : files.filter((file) => isMlxRuntimeFile(file.rfilename));
     const selectedFiles = format === "gguf" ? validGgufFiles(matched) : [undefined];
     if (format === "gguf" && !selectedFiles.length) return [];
@@ -76,12 +141,12 @@ export function normalizeModels(models: HubModel[], format: Artifact["format"]):
         sizeGb: Math.round((artifactSize / 1e9) * 10) / 10,
         paramsB: params(model.cardData?.params, `${model.id} ${(model.tags ?? []).join(" ")}`),
         quantization: filename ? quantizationOf(filename) : undefined,
-        downloads: typeof model.downloads === "number" && Number.isFinite(model.downloads) && model.downloads >= 0 ? model.downloads : 0,
+        downloads: model.downloads !== undefined && model.downloads >= 0 ? model.downloads : 0,
         updatedAt: typeof model.lastModified === "string" ? model.lastModified : new Date(0).toISOString(),
         licence: model.cardData?.license,
         gated: Boolean(model.gated),
-        tags: Array.isArray(model.tags) ? model.tags.filter((tag): tag is string => typeof tag === "string") : [],
-        pipelineTag: typeof model.pipeline_tag === "string" ? model.pipeline_tag : undefined,
+        tags: model.tags ?? [],
+        pipelineTag: model.pipeline_tag,
         repositoryUrl: repoUrl(model.id),
         sourceUrl: filename ? fileUrl(model.id, filename) : repoUrl(model.id),
         filename,
@@ -92,7 +157,7 @@ export function normalizeModels(models: HubModel[], format: Artifact["format"]):
 
 export function normalizationExclusions(models: HubModel[], format: Artifact["format"]): Partial<ExclusionSummary> {
   return models.reduce<Partial<ExclusionSummary>>((counts, model) => {
-    const files = Array.isArray(model.siblings) ? model.siblings.filter((file): file is HubFile => Boolean(file) && typeof file.rfilename === "string") : [];
+    const files = modelFiles(model);
     const matched = format === "gguf" ? files.filter((file) => /\.gguf$/i.test(file.rfilename)) : files.filter((file) => isMlxRuntimeFile(file.rfilename));
     if (!matched.length) counts.unsupportedFormat = (counts.unsupportedFormat ?? 0) + 1;
     else if (!normalizeModels([model], format).length) counts.invalidSize = (counts.invalidSize ?? 0) + 1;
@@ -135,8 +200,8 @@ export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeo
   const details = await mapWithConcurrency(models, DETAIL_CONCURRENCY, async (model) => {
     const id = model.id.split("/").map(encodeURIComponent).join("/");
     try {
-      const detail = await fetchJson(`${HUB_BASE}/${id}?blobs=true`, fetcher, refreshController.signal);
-      return isHubModel(detail) ? detail : model;
+      const detail = normalizeHubModel(await fetchJson(`${HUB_BASE}/${id}?blobs=true`, fetcher, refreshController.signal));
+      return detail ?? model;
     } catch (error) {
       if (refreshController.signal.aborted) throw error;
       return model;

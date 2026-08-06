@@ -3,16 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": "26.x"
+    "node": "24.x"
   },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "test": "npm run test:unit && npm run test:a11y",
-    "test:unit": "tsx --test --test-concurrency=4 tests/recommendations.test.ts",
+    "test:unit": "tsx --test --test-concurrency=4 tests/recommendations.test.ts tests/request.test.ts tests/catalogue.test.ts",
     "test:a11y": "npm run build && tsx --test --test-concurrency=4 tests/accessibility.test.ts",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "verify": "npm run lint && npm test && npm run build"
   },
   "dependencies": {
     "next": "^16.3.0",
@@ -21,15 +22,17 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",
-    "@types/node": "^26.1.2",
+    "@eslint/compat": "2.1.0",
+    "@types/node": "24.10.0",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
-    "eslint": "9.39.4",
-    "eslint-config-next": "16.2.6",
+    "@typescript/native": "npm:typescript@7.0.2",
+    "eslint": "10.8.0",
+    "eslint-config-next": "16.3.0",
     "playwright": "^1.62.1",
-    "react-server-dom-webpack": "19.2.6",
-    "tsx": "^4.22.1",
-    "typescript": "5.9.3"
+    "react-server-dom-webpack": "19.2.8",
+    "tsx": "4.23.9",
+    "typescript": "npm:@typescript/typescript6@6.0.2"
   },
   "type": "module"
 }

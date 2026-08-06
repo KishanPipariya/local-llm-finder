@@ -1,5 +1,6 @@
 import { getRecommendations } from "@/lib/recommendation-service";
 import { validateConfig } from "@/lib/recommendations";
+import { catalogueUnavailableMessage } from "@/lib/request";
 
 export const runtime = "nodejs";
 
@@ -10,7 +11,7 @@ export function createPostHandler(get = getRecommendations) {
     try {
       return Response.json(await get(validation.data));
     } catch {
-      return Response.json({ error: "The model catalogue is temporarily unavailable. Please try again shortly." }, { status: 503 });
+      return Response.json({ error: catalogueUnavailableMessage }, { status: 503 });
     }
   };
 }

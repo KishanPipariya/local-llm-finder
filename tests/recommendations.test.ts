@@ -94,6 +94,13 @@ test("uses the supplied ranking clock for deterministic recency ordering", () =>
   const now = Date.parse("2026-08-06T00:00:00Z");
   assert.equal(rankArtifacts([older, newer], { ...mac, workload: "balanced" }, now)[0].id, newer.id);
 });
+test("orders equal-score artifacts by stable identity regardless of input order", () => {
+  const alpha = { ...gguf, id: "org/Alpha-GGUF/file.gguf", modelId: "org/Alpha-GGUF", title: "Same", tags: [], downloads: 1, updatedAt: "2026-08-01T00:00:00Z" };
+  const beta = { ...alpha, id: "org/Beta-GGUF/file.gguf", modelId: "org/Beta-GGUF" };
+  const now = Date.parse("2026-08-06T00:00:00Z");
+  assert.deepEqual(rankArtifacts([beta, alpha], { ...mac, workload: "balanced" }, now).map((item) => item.id), [alpha.id, beta.id]);
+  assert.deepEqual(rankArtifacts([alpha, beta], { ...mac, workload: "balanced" }, now).map((item) => item.id), [alpha.id, beta.id]);
+});
 test("labels IQ and full-precision GGUF variants", () => {
   const artifacts = normalizeModels([{ id: "org/Precision-GGUF", siblings: [{ rfilename: "model.BF16.gguf", size: 9_000_000_000 }, { rfilename: "model.IQ3_XS.gguf", size: 3_000_000_000 }, { rfilename: "model.Q2_K.gguf", size: 2_000_000_000 }] }], "gguf");
   assert.deepEqual(artifacts.map((artifact) => artifact.quantization), ["Q2_K", "IQ3_XS", "BF16"]);

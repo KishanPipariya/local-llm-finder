@@ -13,7 +13,7 @@ chat and coding models for a selected Apple Silicon Mac configuration.
 
 ## Stack and commands
 
-- Node.js 26.x; use npm.
+- Node.js 24.x; use npm.
 - Next.js App Router, React, TypeScript (strict), and plain CSS in
   `app/globals.css`.
 - Run before handing off relevant changes:

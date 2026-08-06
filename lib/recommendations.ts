@@ -180,6 +180,13 @@ function variantKey(item: Recommendation) {
   return `${item.explanation.familyKey}|${item.format}|${item.quantization ?? item.filename ?? item.id}`;
 }
 
+function compareArtifactIdentity(a: Artifact, b: Artifact) {
+  return a.id.localeCompare(b.id)
+    || a.modelId.localeCompare(b.modelId)
+    || a.format.localeCompare(b.format)
+    || (a.filename ?? "").localeCompare(b.filename ?? "");
+}
+
 function emptyExclusions(): ExclusionSummary {
   return { insufficientDisk: 0, insufficientMemory: 0, invalidSize: 0, unsupportedFormat: 0 };
 }
@@ -226,7 +233,10 @@ export function rankArtifactsWithExplanations(artifacts: Artifact[], config: Mac
     return [{ ...item, runtimes, memoryGb, performance, pace, notes, why: `${item.paramsB ? `${item.paramsB}B parameters` : "A current compact model"}; ${workloadRelevance(category, config.workload)} ${profile.name}'s ${profile.bandwidthGbps} GB/s memory bandwidth suggests ${pace.toLowerCase()} expected pace for this footprint.`, guidance: buildGuidance(item, runtimes), explanation: { fit: { disk: { availableBytes: config.diskGb * 1e9, headroomBytes: diskHeadroom }, memory: { availableGb: config.memoryGb, headroomGb: memoryHeadroom, assumption: "File mapping plus conservative runtime, 4k-context, and KV-cache overhead." }, runtimes, workload: { category, relevance: workloadRelevance(category, config.workload) }, pace: { bandwidthGbps: profile.bandwidthGbps, inputs: "Published family memory bandwidth relative to estimated model memory." } }, rankingFactors, familyKey: familyKey(item) } }];
   });
   const grouped = new Map<string, Recommendation>();
-  for (const item of eligible.sort((a, b) => modelScore(b, config, b.memoryGb, now) - modelScore(a, config, a.memoryGb, now))) {
+  for (const item of eligible.sort((a, b) => {
+    const scoreDifference = modelScore(b, config, b.memoryGb, now) - modelScore(a, config, a.memoryGb, now);
+    return scoreDifference || compareArtifactIdentity(a, b);
+  })) {
     const key = variantKey(item);
     if (!grouped.has(key)) grouped.set(key, item);
   }

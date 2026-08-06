@@ -1,22 +1,20 @@
 import { FinderForm } from "@/app/components/finder-form";
 import { Results } from "@/app/components/results";
 import { getRecommendations } from "@/lib/recommendation-service";
-import { validateConfig, type MacConfig } from "@/lib/recommendations";
+import { catalogueUnavailableMessage, parseFinderRequest, type FinderSearchParams } from "@/lib/request";
+import type { MacConfig } from "@/lib/recommendations";
 
 const initial: MacConfig = { chip: "m4", memoryGb: 16, diskGb: 80, workload: "balanced" };
-type SearchParams = Record<string, string | string[] | undefined>;
-const valueOf = (params: SearchParams, key: string) => Array.isArray(params[key]) ? params[key][0] : params[key];
 
-export default async function Home({ searchParams }: { searchParams: Promise<SearchParams> }) {
+export default async function Home({ searchParams }: { searchParams: Promise<FinderSearchParams> }) {
   const params = await searchParams;
-  const submitted = ["chip", "memoryGb", "diskGb", "workload"].some((key) => valueOf(params, key) !== undefined);
-  const candidate = { chip: valueOf(params, "chip"), memoryGb: valueOf(params, "memoryGb") === undefined ? undefined : Number(valueOf(params, "memoryGb")), diskGb: valueOf(params, "diskGb") === undefined ? undefined : Number(valueOf(params, "diskGb")), workload: valueOf(params, "workload") };
-  const validation = submitted ? validateConfig(candidate) : { valid: true as const, data: initial };
+  const { submitted, candidate, validation: submittedValidation } = parseFinderRequest(params);
+  const validation = submittedValidation ?? { valid: true as const, data: initial };
   let result;
   let catalogueError = "";
   if (submitted && validation.valid) {
     try { result = await getRecommendations(validation.data); }
-    catch { catalogueError = "The model catalogue is temporarily unavailable. Please try again shortly."; }
+    catch { catalogueError = catalogueUnavailableMessage; }
   }
   return <main>
     <a className="skip-link" href="#finder">Skip to the model finder</a>

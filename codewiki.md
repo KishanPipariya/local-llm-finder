@@ -11,12 +11,12 @@ request, and renders recommendations without requiring client-side JavaScript.
 
 ```text
 Browser GET /?chip=…&memoryGb=…&diskGb=…&workload=…
-  -> app/page.tsx validates the query
+  -> lib/request.ts takes the first value for repeated fields, coerces numeric query values, and validates the query
   -> lib/recommendation-service.ts obtains the catalogue and ranks artifacts
   -> server-rendered FinderForm and Results response, including typed fit explanations and exclusion counts
 
 Browser POST /api/recommendations (same configuration JSON)
-  -> app/api/recommendations/route.ts validates the body
+  -> app/api/recommendations/route.ts validates the body and uses the same catalogue-unavailable message
   -> the same recommendation service
   -> the same JSON result (including fit explanations and exclusion counts), 400 validation error, or 503 catalogue error
 ```
@@ -38,17 +38,21 @@ field-specific errors as the JSON API.
 | Path | Responsibility |
 | --- | --- |
 | `app/layout.tsx` | Root HTML layout and site metadata. |
-| `app/page.tsx` | Parses GET query values, validates them, retrieves results, and renders page-level errors. |
+| `next.config.ts` | Next configuration, including the TypeScript 6 compatibility API mode required while TypeScript 7 has no compiler API. |
+| `app/page.tsx` | Uses parsed GET query values, retrieves results, and renders page-level errors. |
 | `app/components/finder-form.tsx` | Accessible configuration form and field-level validation messages. |
 | `app/components/hardware-selector.tsx` | Client-side chip/memory filtering and accessible automatic-adjustment announcement. |
 | `app/components/results.tsx` | Results heading, plain-language catalogue status, pace disclaimer, and actionable exclusion disclosure. |
 | `app/components/recommendation-card.tsx` | Recommendation fit explanation, technical/ranking disclosure, Hugging Face link, and runtime guidance. |
 | `app/api/recommendations/route.ts` | Node.js POST JSON endpoint; exposes `createPostHandler` for testing. |
+| `lib/request.ts` | Typed GET-query parsing and shared request-level catalogue-unavailable message. |
 | `lib/recommendations.ts` | Pure validation, memory and pace estimates, eligibility, scoring, ranking, and guidance. |
 | `lib/recommendation-service.ts` | Composition layer joining catalogue retrieval to ranking. |
 | `lib/catalogue.ts` | Server-side Hugging Face requests and conversion to normalized artifacts. |
 | `lib/catalogue-cache.ts` | Six-hour, process-local cache with request coalescing and stale fallback. |
-| `tests/recommendations.test.ts` | Node tests for domain logic, normalization, cache behavior, and API statuses. |
+| `tests/recommendations.test.ts` | Node tests for domain logic, ranking, cache behavior, and API statuses. |
+| `tests/request.test.ts` | Node tests for GET parsing and GET/POST validation parity. |
+| `tests/catalogue.test.ts` | Node tests for catalogue boundary normalization and upstream failure behavior. |
 | `tests/accessibility.test.ts` | Playwright and axe checks for keyboard use, validation, responsive reflow, and no-JavaScript behavior. |
 | `docs/accessibility-release-checklist.md` | Manual release checks for public UI changes. |
 
@@ -70,8 +74,11 @@ including incomplete submitted configurations.
 ### Artifact normalization and fit
 
 `Artifact.sizeBytes` is the source of truth for capacity calculations;
-`sizeGb` is display-only. Normalization excludes unknown, non-integer, and
-smaller-than-100 MB artifacts.
+`sizeGb` is display-only. Hugging Face responses are untrusted runtime input:
+models without a valid ID are discarded, malformed optional nested metadata is
+omitted, and malformed files are discarded before `Artifact` values are
+created. Normalization excludes unknown, non-integer, and smaller-than-100 MB
+artifacts.
 
 - GGUF: retain every valid `.gguf` file as a separate quantization variant (Q2–Q8,
   IQ variants, and F16/BF16/F32 labels when present). It supports Ollama, LM
@@ -98,7 +105,8 @@ metadata add a bounded workload preference. Missing or unknown task metadata
 stays eligible and neutral. Workload metadata is presented only as
 coding-oriented, general chat, or mixed—not as a capability benchmark. Ranking
 accepts an optional clock value for deterministic callers and tests; normal
-requests use `Date.now()`.
+requests use `Date.now()`. Equal scores use stable artifact identity fields as
+explicit tie-breakers, so an upstream list's order cannot change a shortlist.
 
 The recommendation result also includes an `exclusions` count by reason. Counts
 include candidates rejected during Hugging Face normalization, but never expose
@@ -142,7 +150,7 @@ request is part of this design.
 
 ## Development and verification
 
-Requires Node.js 26.x and npm.
+Requires Node.js 24.x and npm.
 
 ```bash
 npm install
@@ -150,9 +158,11 @@ npm run dev
 npm test
 npm run lint
 npm run build
+npm run verify
 ```
 
-Run all three verification commands for relevant changes. `npm test` includes
+`npm run verify` runs linting, tests, and a production build; CI invokes that
+single command. The individual commands remain available. `npm test` includes
 both the Node test suite and the Playwright/axe accessibility suite; the latter
 builds the app, allocates an ephemeral localhost port, and starts a local
 production Next.js server. That spawned browser-test process alone receives an
@@ -161,7 +171,13 @@ and lets the no-JavaScript flow assert successful server-rendered results
 without calling the external catalogue. Cleanup explicitly terminates and waits
 for the production server.
 
-Use Node 26.x (`.nvmrc` is provided). GitHub Actions installs that version,
+Use Node 24.x (`.nvmrc` is provided). The toolchain uses ESLint 10.8.0,
+`eslint-config-next` 16.3.0, `tsx` 4.23.9, and TypeScript 7.0.2. TypeScript
+7 currently has no compiler API, so its official `@typescript/native` package
+supplies `tsc` while the `typescript` dependency aliases the TypeScript 6
+compatibility API required by Next and typescript-eslint. ESLint's official
+compatibility adapter keeps Next's configured rules working under ESLint 10.
+GitHub Actions installs Node 24.x,
 installs Chromium for Playwright, and runs the full verification set on pushes
 and pull requests.
 
