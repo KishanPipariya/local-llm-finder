@@ -30,6 +30,7 @@ const context = await browser.newContext();
 try {
   const initial = await waitForPage(context);
   await assertNoAxeViolations(initial, "initial finder");
+  const lightSurface = await initial.locator("body").evaluate((body) => getComputedStyle(body).backgroundColor);
   await initial.keyboard.press("Tab");
   assert.equal(await initial.locator(":focus").textContent(), "Skip to the model finder");
   const button = initial.getByRole("button", { name: "Find compatible models" });
@@ -68,6 +69,20 @@ try {
   assert.equal(await invalid.locator("#memoryGb").getAttribute("aria-describedby"), "memory-error");
   assert.equal(await invalid.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "320px viewport reflows without horizontal scrolling");
 
+  const darkContext = await browser.newContext({ colorScheme: "dark" });
+  const dark = await waitForPage(darkContext);
+  await assertNoAxeViolations(dark, "dark-theme finder");
+  assert.notEqual(await dark.locator("body").evaluate((body) => getComputedStyle(body).backgroundColor), lightSurface, "dark theme uses a distinct page surface");
+  await dark.keyboard.press("Tab");
+  assert.notEqual(await dark.locator(":focus").evaluate((element) => getComputedStyle(element).outlineStyle), "none", "dark theme keeps a visible keyboard focus treatment");
+
+  const narrowDarkContext = await browser.newContext({ colorScheme: "dark", viewport: { width: 320, height: 720 } });
+  const darkInvalid = await narrowDarkContext.newPage();
+  await darkInvalid.goto(`${origin}/?chip=m4Pro&memoryGb=16&diskGb=0&workload=nope`, { waitUntil: "networkidle" });
+  await assertNoAxeViolations(darkInvalid, "dark-theme server-rendered invalid form");
+  assert.equal(await darkInvalid.locator(".error-summary").count(), 1, "dark theme retains the visible error summary");
+  assert.equal(await darkInvalid.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "dark theme reflows without horizontal scrolling at 320px");
+
   const noScriptContext = await browser.newContext({ javaScriptEnabled: false });
   const noScript = await noScriptContext.newPage();
   await noScript.goto(origin, { waitUntil: "domcontentloaded" });
@@ -77,6 +92,8 @@ try {
   assert.match(noScript.url(), /chip=m4/);
   assert.ok(await noScript.locator("#results").count(), "server-rendered results are visible without JavaScript");
   await noScriptContext.close();
+  await narrowDarkContext.close();
+  await darkContext.close();
   await narrowContext.close();
   await context.close();
 } finally {
