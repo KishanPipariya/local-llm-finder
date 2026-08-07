@@ -115,6 +115,8 @@ try {
   assert.equal(await initial.locator("#memoryGb").inputValue(), "48", "shared memory remains selected");
 
   await initial.goto(`${origin}/?chip=m4&memoryGb=16&diskGb=12&workload=chat`, { waitUntil: "networkidle" });
+  assert.equal(await initial.locator(".card.top-pick").count(), 1, "the first ranked result is visually marked as the top pick");
+  assert.equal(await initial.locator(".card").first().locator(".top-pick-label").textContent(), "Top pick");
   await assertUnchangedBox(initial, ".card", () => initial.locator(".card").first().hover(), "hovering a recommendation card");
   await assertCardDisclosure(initial, "Installation guidance");
   await assertCardDisclosure(initial, "Technical details and ranking factors");

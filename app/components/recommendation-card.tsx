@@ -2,10 +2,11 @@ import type { Recommendation } from "@/lib/recommendations";
 
 const formatBytes = (bytes: number) => new Intl.NumberFormat("en", { maximumFractionDigits: 0 }).format(bytes);
 
-export function RecommendationCard({ model }: { model: Recommendation }) {
+export function RecommendationCard({ model, isTopPick = false }: { model: Recommendation; isTopPick?: boolean }) {
   const headingId = `model-${model.id.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-${model.format}`;
-  return <article className="card" aria-labelledby={headingId}>
-    <div className="card-top"><span className={`status ${model.performance.toLowerCase().replace(" ", "-")}`}><span className="visually-hidden">Memory fit: </span>{model.performance}</span><span><abbr title={model.format === "gguf" ? "GPT-Generated Unified Format" : "Machine Learning eXchange"}>{model.format.toUpperCase()}</abbr>{model.quantization ? ` · ${model.quantization}` : ""}</span></div>
+  return <article className={`card${isTopPick ? " top-pick" : ""}`} aria-labelledby={headingId}>
+    <div className="card-top">{isTopPick ? <span className="top-pick-label">Top pick</span> : <span className={`status ${model.performance.toLowerCase().replace(" ", "-")}`}><span className="visually-hidden">Memory fit: </span>{model.performance}</span>}<span><abbr title={model.format === "gguf" ? "GPT-Generated Unified Format" : "Machine Learning eXchange"}>{model.format.toUpperCase()}</abbr>{model.quantization ? ` · ${model.quantization}` : ""}</span></div>
+    {isTopPick && <span className={`status ${model.performance.toLowerCase().replace(" ", "-")}`}><span className="visually-hidden">Memory fit: </span>{model.performance}</span>}
     <h3 id={headingId}>{model.title}</h3><p>{model.why}</p>
     <dl><div><dt>Download size</dt><dd>{model.sizeGb} GB</dd></div><div><dt>Estimated memory needed</dt><dd>{model.memoryGb} GB</dd></div><div><dt>Expected pace</dt><dd>{model.pace}<span className="visually-hidden">, qualitative estimate</span></dd></div></dl>
     <section className="fit-breakdown" aria-label={`Why ${model.title} fits`}><h4>Setup check</h4><ul><li>Context: {model.explanation.fit.context.label}.</li><li>Disk headroom: {model.explanation.fit.disk.headroomBytes / 1e9 >= 1 ? `${(model.explanation.fit.disk.headroomBytes / 1e9).toFixed(1)} GB` : `${Math.round(model.explanation.fit.disk.headroomBytes / 1e6)} MB`} after download.</li><li>Memory headroom: {model.explanation.fit.memory.headroomGb.toFixed(1)} GB from the conservative estimate.</li><li>Runtime: {model.explanation.fit.runtimes.join(", ")}.</li></ul></section>

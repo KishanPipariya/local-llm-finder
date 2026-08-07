@@ -40,6 +40,13 @@ for installation guidance and technical/ranking information. Their summaries
 have visible expand/collapse indicators and remain fully operable by mouse and
 keyboard without client-side JavaScript.
 
+The server-rendered finder presentation groups configuration controls into
+Hardware, Use and context, and Runtime sections. The hero repeats the
+no-account, no-tracking, and no-saved-configuration promise beside the primary
+task. Results keep the complete ranked shortlist, but visually mark the first
+already-ranked card as the “Top pick”; this is a presentation label only and
+does not alter scoring, ranking, or API output.
+
 ## Repository map
 
 | Path | Responsibility |
@@ -49,8 +56,8 @@ keyboard without client-side JavaScript.
 | `app/page.tsx` | Uses parsed GET query values, retrieves results, and renders page-level errors. |
 | `app/components/finder-form.tsx` | Accessible configuration form and field-level validation messages. |
 | `app/components/hardware-selector.tsx` | Client-side chip/memory filtering and accessible automatic-adjustment announcement. |
-| `app/components/results.tsx` | Results heading, plain-language catalogue status, pace disclaimer, and actionable exclusion disclosure. |
-| `app/components/recommendation-card.tsx` | Recommendation fit explanation, Hugging Face link, and initially collapsed installation and technical/ranking disclosures. |
+| `app/components/results.tsx` | Results heading, plain-language catalogue status, pace disclaimer, actionable exclusion disclosure, and visual Top pick designation for the first ranked item. |
+| `app/components/recommendation-card.tsx` | Recommendation fit explanation, metric hierarchy, Hugging Face link, and initially collapsed installation and technical/ranking disclosures. |
 | `app/api/recommendations/route.ts` | Node.js POST JSON endpoint; exposes `createPostHandler` for testing. |
 | `lib/request.ts` | Typed GET-query parsing and shared request-level catalogue-unavailable message. |
 | `lib/recommendations.ts` | Pure validation, memory and pace estimates, eligibility, scoring, ranking, and guidance. |
