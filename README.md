@@ -1,14 +1,42 @@
 # Mac Local LLM Finder
 
-A simple way to find local chat and coding models that suit your Apple Silicon Mac. Choose your Mac's chip, unified memory, and available storage, and the finder suggests models you can run on your own computer.
+[Try the live demo](https://local-llm-finder-m7qb.vercel.app/) — a privacy-first finder for current local chat and coding models that fit an Apple Silicon Mac.
 
-Your Mac configuration is used only to produce the suggestions—it is not saved. The recommendations help you compare likely compatibility, storage needs, and expected pace. They are estimates, so real-world results can vary with your setup and the way you use a model.
+![Fixture-backed recommended results](docs/images/recommended-results.png)
 
-## How it works
+Your Mac configuration is used only for that request; it is not saved. The finder gives conservative compatibility, storage, and qualitative pace estimates rather than performance benchmarks.
 
-1. Select your Mac's configuration.
-2. Choose whether you want a chat model or a coding model.
-3. Review the suggested local models and their installation guidance.
+## Highlights
+
+- Complete, shareable GET links and a server-rendered form that work without JavaScript.
+- Validated Apple Silicon chip and unified-memory combinations.
+- Runtime-specific GGUF recommendations for Ollama, LM Studio, and llama.cpp, plus MLX recommendations.
+- A server-side public Hugging Face catalogue with six-hour caching and stale fallback.
+
+## Request and data flow
+
+```text
+GET form or preset link ─┐
+                         ├─> validate Mac profile ─> server-side catalogue cache ─> ranked HTML results
+POST /api/recommendations ┘                                      └───────────────> JSON results
+```
+
+## API
+
+`POST /api/recommendations` accepts the same configuration used by the GET form:
+
+```json
+{
+  "chip": "m4",
+  "memoryGb": 16,
+  "diskGb": 80,
+  "workload": "balanced",
+  "runtime": "ollama",
+  "context": "normal"
+}
+```
+
+A successful response returns the existing recommendation result object, including `recommendations`, `exclusions`, and `stale`. Invalid configurations return `400` with `errors` and `fieldErrors`; a catalogue outage with no cached result returns `503` with `error`.
 
 ## Run locally
 
@@ -22,3 +50,4 @@ npm run dev
 Open [http://localhost:3000](http://localhost:3000) after the development server starts.
 
 For project internals, development checks, and architecture details, see [codewiki.md](codewiki.md).
+For a repeatable demo handoff, see [the showcase checklist](docs/showcase-checklist.md).

@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { createServer } from "node:net";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, type BrowserContext, type Page } from "playwright";
-import { chipProfiles, chips } from "../lib/recommendations.js";
+import { chipProfiles, chips, validateConfig } from "../lib/recommendations.js";
 
 async function allocatePort() {
   const listener = createServer();
@@ -75,6 +75,33 @@ const context = await browser.newContext();
 try {
   const initial = await waitForPage(context);
   await assertNoAxeViolations(initial, "initial finder");
+  assert.equal(await initial.locator(".section-help").filter({ hasText: "We only show model files compatible with the selected runtime." }).count(), 1, "runtime helper explains selected-runtime compatibility");
+  assert.equal(await initial.locator('link[rel="canonical"]').getAttribute("href"), "https://local-llm-finder-m7qb.vercel.app", "canonical URL uses the public site URL");
+  assert.equal(await initial.locator('meta[property="og:url"]').getAttribute("content"), "https://local-llm-finder-m7qb.vercel.app", "Open Graph metadata uses the public site URL");
+  assert.equal(await initial.locator('meta[name="twitter:card"]').getAttribute("content"), "summary_large_image", "Twitter uses a large image card");
+  assert.ok(await initial.locator('meta[property="og:image"]').count(), "Open Graph image metadata is present");
+  assert.ok(await initial.locator('link[rel="icon"][href*="/icon"]').count(), "generated app icon metadata is present");
+  const socialImage = await initial.request.get(`${origin}/opengraph-image`);
+  assert.equal(socialImage.status(), 200, "generated social image responds successfully");
+  assert.match(socialImage.headers()["content-type"] ?? "", /^image\/png/, "generated social image is a PNG");
+  const presetLinks = initial.locator(".presets a");
+  assert.equal(await presetLinks.count(), 3, "three quick-start preset links are available");
+  for (let index = 0; index < await presetLinks.count(); index += 1) {
+    const preset = presetLinks.nth(index);
+    const href = await preset.getAttribute("href");
+    assert.ok(href, "preset has a URL");
+    const query = new URL(href, origin).searchParams;
+    const config = { chip: query.get("chip") ?? undefined, memoryGb: Number(query.get("memoryGb")), diskGb: Number(query.get("diskGb")), workload: query.get("workload") ?? undefined, runtime: query.get("runtime") ?? undefined, context: query.get("context") ?? undefined };
+    assert.equal(validateConfig(config).valid, true, `${await preset.textContent()} has a complete valid configuration URL`);
+    await initial.goto(new URL(href, origin).toString(), { waitUntil: "networkidle" });
+    assert.equal(await initial.locator("#results").count(), 1, `${await preset.textContent()} reaches a server-rendered shortlist`);
+    await preset.focus().catch(() => undefined);
+  }
+  await initial.goto(origin, { waitUntil: "networkidle" });
+  const firstPreset = initial.getByRole("link", { name: /Everyday/ });
+  await firstPreset.focus();
+  assert.equal(await initial.locator(":focus").evaluate((element) => element.tagName), "A", "preset retains keyboard-accessible link semantics");
+  await initial.goto(origin, { waitUntil: "networkidle" });
   const lightSurface = await initial.locator("body").evaluate((body) => getComputedStyle(body).backgroundColor);
   await initial.keyboard.press("Tab");
   assert.equal(await initial.locator(":focus").textContent(), "Skip to the model finder");

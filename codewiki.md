@@ -24,6 +24,9 @@ Browser POST /api/recommendations (same configuration JSON)
 `app/page.tsx` is intentionally a server component. Its query parameters make
 the page request-time rendered. The form in `FinderForm` uses `method="get"`,
 so the ordinary page flow remains functional when JavaScript is disabled.
+The page also offers three ordinary GET preset links (Everyday, Developer, and
+High-capacity). Each link includes a complete valid configuration, so it is
+shareable and lands directly on server-rendered results without JavaScript.
 `HardwareSelector` is a small progressive-enhancement client component. Its
 initial server-rendered and hydrated states retain the complete memory list, so
 the selector does not shift at load time and no-JavaScript users keep the same
@@ -52,6 +55,8 @@ does not alter scoring, ranking, or API output.
 | Path | Responsibility |
 | --- | --- |
 | `app/layout.tsx` | Root HTML layout and site metadata. |
+| `app/opengraph-image.tsx` | Code-generated 1200×630 branded social image route. |
+| `app/icon.tsx` | Code-generated branded application icon route. |
 | `next.config.ts` | Next configuration, including the TypeScript 6 compatibility API mode required while TypeScript 7 has no compiler API. |
 | `app/page.tsx` | Uses parsed GET query values, retrieves results, and renders page-level errors. |
 | `app/components/finder-form.tsx` | Accessible configuration form and field-level validation messages. |
@@ -69,6 +74,9 @@ does not alter scoring, ranking, or API output.
 | `tests/catalogue.test.ts` | Node tests for catalogue boundary normalization and upstream failure behavior. |
 | `tests/accessibility.test.ts` | Playwright and axe checks for keyboard use, validation, responsive reflow, and no-JavaScript behavior. |
 | `docs/accessibility-release-checklist.md` | Manual release checks for public UI changes. |
+| `docs/showcase-checklist.md` | Demo warm-up, upstream-outage fallback, and installation-path review checklist. |
+| `docs/images/recommended-results.png` | Checked-in fixture-backed screenshot used in the README. |
+| `mise.toml` | Node 24 version-management configuration. |
 
 ## Core domain contracts
 
@@ -220,6 +228,18 @@ compatibility adapter keeps Next's configured rules working under ESLint 10.
 
 When changing visible finder UI, also follow
 [`docs/accessibility-release-checklist.md`](docs/accessibility-release-checklist.md).
+Use `mise.toml` as an additional Node 24 version-management configuration.
+
+## Sharing and showcase assets
+
+Root metadata uses `https://local-llm-finder-m7qb.vercel.app/` as its canonical
+and Open Graph URL and declares a large-image Twitter card. Next serves the
+branded, code-generated `/opengraph-image` and `/icon` metadata routes using
+the same cream, navy, and blue visual language as the finder. The README's
+`docs/images/recommended-results.png` is captured from the fixture-backed
+production server, not from a live catalogue. See
+[`docs/showcase-checklist.md`](docs/showcase-checklist.md) before a demo or
+recording.
 
 ## Safe change checklist
 
