@@ -186,8 +186,15 @@ npm run build
 npm run verify
 ```
 
-`npm run verify` runs linting, tests, and a production build; CI invokes that
-single command. The individual commands remain available. `npm test` includes
+`npm install` runs the `prepare` script, which configures Git to use the
+version-controlled Husky hooks in `.husky/`. `pre-commit` runs `npm run lint`.
+`pre-push` runs `npm run verify`, which runs linting, tests, and a production
+build. The individual commands remain available, and Git's standard
+`--no-verify` option can bypass a hook when explicitly needed. There is no
+GitHub Actions verification workflow; local hooks are the project's verification
+gate.
+
+`npm test` includes
 both the Node test suite and the Playwright/axe accessibility suite; the latter
 builds the app, allocates an ephemeral localhost port, and starts a local
 production Next.js server. That spawned browser-test process alone receives an
@@ -202,9 +209,6 @@ Use Node 24.x (`.nvmrc` is provided). The toolchain uses ESLint 10.8.0,
 supplies `tsc` while the `typescript` dependency aliases the TypeScript 6
 compatibility API required by Next and typescript-eslint. ESLint's official
 compatibility adapter keeps Next's configured rules working under ESLint 10.
-GitHub Actions installs Node 24.x,
-installs Chromium for Playwright, and runs the full verification set on pushes
-and pull requests.
 
 When changing visible finder UI, also follow
 [`docs/accessibility-release-checklist.md`](docs/accessibility-release-checklist.md).

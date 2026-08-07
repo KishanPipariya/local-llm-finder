@@ -13,7 +13,8 @@
     "test:unit": "tsx --test --test-concurrency=4 tests/recommendations.test.ts tests/request.test.ts tests/catalogue.test.ts",
     "test:a11y": "npm run build && tsx --test --test-concurrency=4 tests/accessibility.test.ts",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "verify": "npm run lint && npm test && npm run build"
+    "verify": "npm run lint && npm test && npm run build",
+    "prepare": "husky"
   },
   "dependencies": {
     "next": "^16.3.0",
@@ -29,6 +30,7 @@
     "@typescript/native": "npm:typescript@7.0.2",
     "eslint": "10.8.0",
     "eslint-config-next": "16.3.0",
+    "husky": "^9.1.7",
     "playwright": "^1.62.1",
     "react-server-dom-webpack": "19.2.8",
     "tsx": "4.23.9",
