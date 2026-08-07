@@ -34,6 +34,11 @@ hardware/workload fields are required; runtime and context are optional for
 backwards-compatible shared URLs. Incomplete direct GET requests receive the same
 field-specific errors as the JSON API.
 
+Each recommendation card uses native, initially collapsed `<details>` controls
+for installation guidance and technical/ranking information. Their summaries
+have visible expand/collapse indicators and remain fully operable by mouse and
+keyboard without client-side JavaScript.
+
 ## Repository map
 
 | Path | Responsibility |
@@ -44,7 +49,7 @@ field-specific errors as the JSON API.
 | `app/components/finder-form.tsx` | Accessible configuration form and field-level validation messages. |
 | `app/components/hardware-selector.tsx` | Client-side chip/memory filtering and accessible automatic-adjustment announcement. |
 | `app/components/results.tsx` | Results heading, plain-language catalogue status, pace disclaimer, and actionable exclusion disclosure. |
-| `app/components/recommendation-card.tsx` | Recommendation fit explanation, technical/ranking disclosure, Hugging Face link, and runtime guidance. |
+| `app/components/recommendation-card.tsx` | Recommendation fit explanation, Hugging Face link, and initially collapsed installation and technical/ranking disclosures. |
 | `app/api/recommendations/route.ts` | Node.js POST JSON endpoint; exposes `createPostHandler` for testing. |
 | `lib/request.ts` | Typed GET-query parsing and shared request-level catalogue-unavailable message. |
 | `lib/recommendations.ts` | Pure validation, memory and pace estimates, eligibility, scoring, ranking, and guidance. |

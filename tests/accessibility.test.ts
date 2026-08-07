@@ -33,6 +33,28 @@ async function assertNoAxeViolations(page: Page, state: string) {
   assert.deepEqual(results.violations, [], `axe violations on ${state}: ${results.violations.map((v) => `${v.id}: ${v.help}`).join("; ")}`);
 }
 
+async function assertCardDisclosure(page: Page, name: string) {
+  const disclosure = page.locator(".card").first().locator("details").filter({ has: page.getByText(name, { exact: true }) });
+  const summary = disclosure.locator("summary");
+  const content = disclosure.locator(".disclosure-content");
+
+  assert.equal(await disclosure.getAttribute("open"), null, `${name} starts collapsed`);
+  const summaryBox = await summary.boundingBox();
+  assert.ok(summaryBox && summaryBox.width >= 44 && summaryBox.height >= 44, `${name} summary is at least 44 by 44 CSS pixels`);
+
+  await summary.click();
+  assert.notEqual(await disclosure.getAttribute("open"), null, `${name} opens by mouse`);
+  assert.equal(await content.isVisible(), true, `${name} content is visible when open`);
+  await summary.click();
+  assert.equal(await disclosure.getAttribute("open"), null, `${name} closes by mouse`);
+
+  await summary.focus();
+  await page.keyboard.press("Space");
+  assert.notEqual(await disclosure.getAttribute("open"), null, `${name} opens by keyboard`);
+  await page.keyboard.press("Enter");
+  assert.equal(await disclosure.getAttribute("open"), null, `${name} closes by keyboard`);
+}
+
 const server = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "--port", String(port)], { stdio: "ignore", env: { ...process.env, MAC_LLM_BROWSER_TEST_FIXTURE: "1" } });
 const browser = await chromium.launch();
 const context = await browser.newContext();
@@ -70,6 +92,11 @@ try {
   await initial.locator("#memoryGb").selectOption("48");
   await initial.locator("#chip").selectOption("m5Pro");
   assert.equal(await initial.locator("#memoryGb").inputValue(), "48", "shared memory remains selected");
+
+  await initial.goto(`${origin}/?chip=m4&memoryGb=16&diskGb=12&workload=chat`, { waitUntil: "networkidle" });
+  await assertCardDisclosure(initial, "Installation guidance");
+  await assertCardDisclosure(initial, "Technical details and ranking factors");
+  await assertNoAxeViolations(initial, "recommendation-card disclosures");
 
   const narrowContext = await browser.newContext({ viewport: { width: 320, height: 720 } });
   const invalid = await narrowContext.newPage();
@@ -110,6 +137,8 @@ try {
   assert.equal(await noScript.locator(".error-summary").count(), 0);
   assert.equal(await noScript.locator("#results").count(), 1, "fixture-backed recommendations render server-side without JavaScript");
   assert.ok(await noScript.locator(".card").count());
+  await assertCardDisclosure(noScript, "Installation guidance");
+  await assertCardDisclosure(noScript, "Technical details and ranking factors");
   await noScriptContext.close();
   await narrowDarkContext.close();
   await darkContext.close();
