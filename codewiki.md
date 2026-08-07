@@ -203,6 +203,14 @@ and lets the no-JavaScript flow assert successful server-rendered results
 without calling the external catalogue. Cleanup explicitly terminates and waits
 for the production server.
 
+`npm run test:unit` uses Node's built-in experimental test coverage report for
+the exercised server and domain modules. It enforces the current baseline of
+98.28% lines, 90.10% branches, and 95.74% functions; a regression below any
+threshold fails the command. Consequently, `npm test` and `npm run verify`
+print and enforce this coverage report before running the separate
+accessibility suite. Browser-rendered pages and components are outside this
+unit-coverage scope.
+
 Use Node 24.x (`.nvmrc` is provided). The toolchain uses ESLint 10.8.0,
 `eslint-config-next` 16.3.0, `tsx` 4.23.9, and TypeScript 7.0.2. TypeScript
 7 currently has no compiler API, so its official `@typescript/native` package
