@@ -142,16 +142,19 @@ two add operational notes.
 `retrieveCatalogue` makes two server-side Hugging Face list requests: popular
 GGUF repositories and repositories from `mlx-community`. It then loads model
 details (up to four at once) to obtain artifact file sizes. Each request has a
-12-second timeout, while a complete refresh has a 20-second deadline that
+12-second timeout, while a complete refresh has a five-second deadline that
 aborts all outstanding list and detail requests. An individual detail request
 may fall back to its list result unless that refresh-wide deadline expires; an
 empty usable catalogue fails the full refresh.
 
 `CatalogueCache` holds the last valid normalized catalogue in memory for six
-hours. Concurrent callers share one refresh promise. If a later refresh fails
-and a previous catalogue exists, it returns that catalogue with `stale: true`
-and waits five minutes before the next refresh attempt, avoiding repeated
-upstream calls during an outage.
+hours. A cold cache blocks only for the five-second refresh budget; without a
+successful catalogue, the refresh error is propagated. Once a catalogue has
+expired, callers immediately receive the prior catalogue with `stale: true`
+while one shared background refresh runs. A successful background refresh
+replaces the cache and clears the retry backoff. A failed refresh is consumed
+internally, keeps the prior catalogue stale, and waits five minutes before the
+next refresh attempt, avoiding repeated upstream calls during an outage.
 If no valid catalogue has ever been acquired, the error is propagated:
 
 | Entry point | Invalid configuration | No catalogue available |

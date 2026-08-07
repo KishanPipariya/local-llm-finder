@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { chipProfiles, estimateMemoryGb, rankArtifacts, rankArtifactsWithExplanations, runtimeEligibility, validateConfig, type Artifact, type MacConfig } from "../lib/recommendations";
 import { CatalogueCache, isFresh } from "../lib/catalogue-cache";
-import { normalizationExclusions, normalizeModels, retrieveCatalogue } from "../lib/catalogue";
+import { normalizationExclusions, normalizeModels, REFRESH_TIMEOUT_MS, retrieveCatalogue } from "../lib/catalogue";
 import { createPostHandler } from "../app/api/recommendations/route";
 
 const mac: MacConfig = { chip: "m4", memoryGb: 16, diskGb: 12, workload: "coding" };
@@ -129,36 +129,57 @@ test("retains only counts for invalid or unsupported catalogue candidates", () =
   const counts = normalizationExclusions([{ id: "org/tiny", siblings: [{ rfilename: "tiny.gguf", size: 1 }] }, { id: "org/missing", siblings: [{ rfilename: "readme.md", size: 1_000_000_000 }] }], "gguf");
   assert.deepEqual(counts, { invalidSize: 1, unsupportedFormat: 1 });
 });
-test("cache coalesces concurrent refreshes, rejects invalid timestamps, and backs off stale refresh retries", async () => {
+test("cache coalesces cold refreshes and rejects invalid timestamps", async () => {
   let calls = 0; let release!: () => void; const pending = new Promise<void>((resolve) => { release = resolve; });
   const cache = new CatalogueCache(async () => { calls += 1; await pending; return { items: [gguf], refreshedAt: "2026-08-01T00:00:00Z" }; }, 1, () => Date.parse("2026-08-01T00:00:00Z"));
-  const first = cache.get(); const second = cache.get(); release(); assert.equal((await first).stale, false); assert.equal((await second).stale, false); assert.equal(calls, 1);
+  const first = cache.get(); const second = cache.get();
+  assert.equal(calls, 1);
+  release();
+  assert.equal((await first).stale, false); assert.equal((await second).stale, false);
   assert.equal(isFresh({ items: [], refreshedAt: "not-a-date" }), false);
+});
+
+test("expired cache responds stale immediately, shares one background refresh, and adopts its result", async () => {
+  const now = Date.parse("2026-08-02T00:00:00Z");
+  let calls = 0; let release!: (catalogue: { items: Artifact[]; refreshedAt: string }) => void;
+  const pending = new Promise<{ items: Artifact[]; refreshedAt: string }>((resolve) => { release = resolve; });
+  const cache = new CatalogueCache(async () => { calls += 1; return pending; }, 1, () => now);
+  const oldCatalogue = { items: [gguf], refreshedAt: "2026-08-01T00:00:00Z" };
+  const freshCatalogue = { items: [{ ...gguf, id: "org/Fresh-GGUF/model.gguf", modelId: "org/Fresh-GGUF" }], refreshedAt: "2026-08-02T00:00:00Z" };
+  (cache as unknown as { state: typeof oldCatalogue }).state = oldCatalogue;
+
+  const results = await Promise.all([cache.get(), cache.get(), cache.get()]);
+  assert.deepEqual(results, [{ catalogue: oldCatalogue, stale: true }, { catalogue: oldCatalogue, stale: true }, { catalogue: oldCatalogue, stale: true }]);
+  assert.equal(calls, 1);
+
+  release(freshCatalogue);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(await cache.get(), { catalogue: freshCatalogue, stale: false });
+});
+
+test("failed background refreshes stay stale and respect retry backoff", async () => {
   let staleCalls = 0; let now = Date.parse("2026-08-02T00:00:00Z");
   const stale = new CatalogueCache(async () => { staleCalls += 1; throw new Error("offline"); }, 1, () => now, 60_000);
   (stale as unknown as { state: { items: Artifact[]; refreshedAt: string } }).state = { items: [gguf], refreshedAt: "2026-08-01T00:00:00Z" };
   assert.equal((await stale.get()).stale, true);
+  await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal((await stale.get()).stale, true);
   assert.equal(staleCalls, 1);
   now += 60_000;
   assert.equal((await stale.get()).stale, true);
   assert.equal(staleCalls, 2);
 });
-test("refresh deadline aborts requests and cache serves stale data or propagates when empty", async () => {
+test("five-second cold-start deadline aborts requests and preserves the unavailable response", async () => {
   let requestAborted = false;
   const hangingFetch = (_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
     init?.signal?.addEventListener("abort", () => { requestAborted = true; reject(init.signal?.reason); }, { once: true });
   });
-  await assert.rejects(retrieveCatalogue(hangingFetch as typeof fetch, 5));
+  assert.equal(REFRESH_TIMEOUT_MS, 5_000);
+  await assert.rejects(retrieveCatalogue(hangingFetch as typeof fetch));
   assert.equal(requestAborted, true, "the refresh deadline reaches outstanding requests");
 
-  const stale = new CatalogueCache(() => retrieveCatalogue(hangingFetch as typeof fetch, 5), 1, () => Date.parse("2026-08-02T00:00:00Z"));
-  (stale as unknown as { state: { items: Artifact[]; refreshedAt: string } }).state = { items: [gguf], refreshedAt: "2026-08-01T00:00:00Z" };
-  assert.equal((await stale.get()).stale, true);
-
   const empty = new CatalogueCache(() => retrieveCatalogue(hangingFetch as typeof fetch, 5));
-  await assert.rejects(empty.get());
-  const deadlineHandler = createPostHandler(async () => { await empty.get(); throw new Error("unreachable"); });
+  const deadlineHandler = createPostHandler(async () => empty.get());
   assert.equal((await deadlineHandler(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify(mac) }))).status, 503);
 });
 test("API preserves status codes and returns typed input errors", async () => {

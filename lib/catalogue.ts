@@ -3,7 +3,7 @@ import type { Artifact, ExclusionSummary } from "./recommendations";
 
 const MIN_ARTIFACT_BYTES = 100_000_000;
 const REQUEST_TIMEOUT_MS = 12_000;
-export const REFRESH_TIMEOUT_MS = 20_000;
+export const REFRESH_TIMEOUT_MS = 5_000;
 const DETAIL_CONCURRENCY = 4;
 const HUB_BASE = "https://huggingface.co/api/models";
 

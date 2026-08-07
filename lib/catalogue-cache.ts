@@ -18,20 +18,30 @@ export class CatalogueCache {
   async get(): Promise<{ catalogue: Catalogue; stale: boolean }> {
     const now = this.clock();
     if (this.state && isFresh(this.state, now, this.maxAge)) return { catalogue: this.state, stale: false };
-    if (this.state && now < this.retryAfter) return { catalogue: this.state, stale: true };
-    if (!this.refreshInFlight) this.refreshInFlight = this.refresh().finally(() => { this.refreshInFlight = undefined; });
-    try {
-      const catalogue = await this.refreshInFlight;
-      this.state = catalogue;
-      this.retryAfter = 0;
-      return { catalogue, stale: false };
-    } catch (error) {
-      if (this.state) {
-        this.retryAfter = this.clock() + this.retryDelay;
-        return { catalogue: this.state, stale: true };
-      }
-      throw error;
+    if (this.state) {
+      if (now >= this.retryAfter) void this.startRefresh().catch(() => undefined);
+      return { catalogue: this.state, stale: true };
     }
+
+    return { catalogue: await this.startRefresh(), stale: false };
+  }
+
+  private startRefresh(): Promise<Catalogue> {
+    if (this.refreshInFlight) return this.refreshInFlight;
+    this.refreshInFlight = (async () => {
+      try {
+        const catalogue = await this.refresh();
+        this.state = catalogue;
+        this.retryAfter = 0;
+        return catalogue;
+      } catch (error) {
+        this.retryAfter = this.clock() + this.retryDelay;
+        throw error;
+      } finally {
+        this.refreshInFlight = undefined;
+      }
+    })();
+    return this.refreshInFlight;
   }
 }
 
