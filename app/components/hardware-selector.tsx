@@ -1,12 +1,9 @@
 "use client";
 
-import { useSyncExternalStore, useState, type ChangeEvent } from "react";
+import { useState, type ChangeEvent } from "react";
 import { chipProfiles, chips, type Chip, type ConfigFieldErrors } from "@/lib/recommendations";
 
 const allMemoryOptions = [...new Set(chips.flatMap((chip) => chip.memoryOptionsGb))].sort((a, b) => a - b);
-const subscribeToHydration = () => () => {};
-const getClientHydrationState = () => true;
-const getServerHydrationState = () => false;
 
 function closestMemoryOption(memoryGb: number, options: readonly number[]) {
   return options.reduce((closest, option) => {
@@ -19,16 +16,17 @@ function closestMemoryOption(memoryGb: number, options: readonly number[]) {
 export function HardwareSelector({ chip, memoryGb, fieldErrors }: { chip: Chip; memoryGb: number; fieldErrors: ConfigFieldErrors }) {
   const [selectedChip, setSelectedChip] = useState(chip);
   const [selectedMemoryGb, setSelectedMemoryGb] = useState(memoryGb);
-  const isInteractive = useSyncExternalStore(subscribeToHydration, getClientHydrationState, getServerHydrationState);
+  const [hasChangedChip, setHasChangedChip] = useState(false);
   const [status, setStatus] = useState("");
-  const memoryOptions = isInteractive ? chipProfiles[selectedChip].memoryOptionsGb : allMemoryOptions;
-  const renderedMemoryGb = isInteractive ? closestMemoryOption(selectedMemoryGb, memoryOptions) : selectedMemoryGb;
+  const memoryOptions = hasChangedChip ? chipProfiles[selectedChip].memoryOptionsGb : allMemoryOptions;
+  const renderedMemoryGb = selectedMemoryGb;
 
   function handleChipChange(event: ChangeEvent<HTMLSelectElement>) {
     const nextChip = event.target.value as Chip;
     const nextMemoryGb = closestMemoryOption(renderedMemoryGb, chipProfiles[nextChip].memoryOptionsGb);
     setSelectedChip(nextChip);
     setSelectedMemoryGb(nextMemoryGb);
+    setHasChangedChip(true);
     setStatus(nextMemoryGb === selectedMemoryGb ? "" : `Unified memory adjusted to ${nextMemoryGb} GB for ${chipProfiles[nextChip].name}.`);
   }
 

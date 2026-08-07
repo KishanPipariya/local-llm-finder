@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { createServer } from "node:net";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, type BrowserContext, type Page } from "playwright";
-import { chipProfiles } from "../lib/recommendations.js";
+import { chipProfiles, chips } from "../lib/recommendations.js";
 
 async function allocatePort() {
   const listener = createServer();
@@ -31,6 +31,19 @@ async function waitForPage(context: BrowserContext): Promise<Page> {
 async function assertNoAxeViolations(page: Page, state: string) {
   const results = await new AxeBuilder({ page }).analyze();
   assert.deepEqual(results.violations, [], `axe violations on ${state}: ${results.violations.map((v) => `${v.id}: ${v.help}`).join("; ")}`);
+}
+
+async function assertUnchangedBox(page: Page, selector: string, action: () => Promise<void>, description: string) {
+  const target = page.locator(selector);
+  const getDocumentBox = () => target.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    return { x: box.x + window.scrollX, y: box.y + window.scrollY, width: box.width, height: box.height };
+  });
+  const before = await getDocumentBox();
+  assert.ok(before, `${description} has a layout box before interaction`);
+  await action();
+  await page.waitForTimeout(250);
+  assert.deepEqual(await getDocumentBox(), before, `${description} does not move or resize`);
 }
 
 async function assertCardDisclosure(page: Page, name: string) {
@@ -69,7 +82,15 @@ try {
   const buttonBox = await button.boundingBox();
   assert.ok(buttonBox && buttonBox.width >= 44 && buttonBox.height >= 44, "submit target is at least 44 by 44 CSS pixels");
 
-  await initial.waitForFunction(() => document.querySelectorAll("#memoryGb option").length === 3);
+  const allMemoryValues = [...new Set(chips.flatMap((chip) => chip.memoryOptionsGb))].sort((a, b) => a - b).map(String);
+  assert.deepEqual(await initial.locator("#memoryGb option").evaluateAll((options) => options.map((option) => option.getAttribute("value"))), allMemoryValues, "initial memory list is comprehensive");
+  await initial.waitForTimeout(250);
+  assert.deepEqual(await initial.locator("#memoryGb option").evaluateAll((options) => options.map((option) => option.getAttribute("value"))), allMemoryValues, "hydration does not change the initial memory list");
+
+  await assertUnchangedBox(initial, ".workload label:has(input[value=balanced]) span", () => initial.locator(".workload label:has(input[value=chat])").click(), "selecting a workload choice");
+  await assertUnchangedBox(initial, ".workload label:has(input[value=chat]) span", () => initial.locator(".workload label:has(input[value=chat])").hover(), "hovering a workload choice");
+  await assertUnchangedBox(initial, "button[type=submit]", () => button.hover(), "hovering the submit button");
+
   for (const [chip, profile] of Object.entries(chipProfiles)) {
     await initial.locator("#chip").selectOption(chip);
     assert.deepEqual(await initial.locator("#memoryGb option").evaluateAll((options) => options.map((option) => option.getAttribute("value"))), profile.memoryOptionsGb.map(String), `${profile.name} exposes only its supported memory options`);
@@ -94,6 +115,7 @@ try {
   assert.equal(await initial.locator("#memoryGb").inputValue(), "48", "shared memory remains selected");
 
   await initial.goto(`${origin}/?chip=m4&memoryGb=16&diskGb=12&workload=chat`, { waitUntil: "networkidle" });
+  await assertUnchangedBox(initial, ".card", () => initial.locator(".card").first().hover(), "hovering a recommendation card");
   await assertCardDisclosure(initial, "Installation guidance");
   await assertCardDisclosure(initial, "Technical details and ranking factors");
   await assertNoAxeViolations(initial, "recommendation-card disclosures");
