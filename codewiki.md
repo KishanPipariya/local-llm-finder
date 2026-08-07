@@ -10,7 +10,7 @@ request, and renders recommendations without requiring client-side JavaScript.
 ## Request and data flow
 
 ```text
-Browser GET /?chip=…&memoryGb=…&diskGb=…&workload=…
+Browser GET /?chip=…&memoryGb=…&diskGb=…&workload=…&runtime=…&context=…
   -> lib/request.ts takes the first value for repeated fields, coerces numeric query values, and validates the query
   -> lib/recommendation-service.ts obtains the catalogue and ranks artifacts
   -> server-rendered FinderForm and Results response, including typed fit explanations and exclusion counts
@@ -29,8 +29,9 @@ hydration it exposes only unified-memory options supported by the selected chip
 and chooses the closest valid amount (ties go lower) when a chip change makes
 the current amount impossible. The initial server-rendered HTML retains the
 complete memory list, so no-JavaScript users keep the same server-validated
-fallback flow. Once any configuration query parameter is present, all four
-fields are required; incomplete direct GET requests receive the same
+fallback flow. Once any configuration query parameter is present, the four
+hardware/workload fields are required; runtime and context are optional for
+backwards-compatible shared URLs. Incomplete direct GET requests receive the same
 field-specific errors as the JSON API.
 
 ## Repository map
@@ -60,12 +61,16 @@ field-specific errors as the JSON API.
 
 ### Configuration validation
 
-`validateConfig` accepts exactly four values:
+`validateConfig` requires four values and accepts two optional preferences:
 
 - `chip`: a key in `chipProfiles`.
 - `memoryGb`: one of that chip's published unified-memory options.
 - `diskGb`: finite and between 1 and 4,000 GB.
 - `workload`: `chat`, `coding`, or `balanced`.
+- `runtime` (optional): `ollama`, `lmStudio`, `llamaCpp`, or `mlx`. When absent,
+  ranking remains runtime-neutral for legacy API callers and URLs.
+- `context` (optional): `small`, `normal`, or `long`. When absent it uses the
+  established conservative Normal estimate.
 
 It returns both an ordered error list and typed field errors. Both GET and POST
 must use this function so they reject the same impossible Mac configurations,
@@ -89,6 +94,10 @@ artifacts.
   It supports MLX.
 - Disk fit is strict: the exact byte size must be no greater than free disk.
 - Memory estimate adds conservative file-mapping, runtime, and context overhead.
+  Small is for short chats, Normal is the default for typical chat/coding, and
+  Long reserves more headroom for large documents or repositories. A selected
+  runtime filters results to directly usable formats and gives each card one
+  exact-file setup command.
   A model is omitted when the estimate exceeds unified memory.
 - Gated models remain eligible, but carry a sign-in and licence-acceptance note.
 

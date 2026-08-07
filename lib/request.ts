@@ -8,9 +8,11 @@ export type FinderCandidate = {
   memoryGb?: number;
   diskGb?: number;
   workload?: string;
+  runtime?: string;
+  context?: string;
 };
 
-const configurationFields = ["chip", "memoryGb", "diskGb", "workload"] as const;
+const configurationFields = ["chip", "memoryGb", "diskGb", "workload", "runtime", "context"] as const;
 
 export function firstQueryValue(params: FinderSearchParams, key: string): string | undefined {
   const value = params[key];
@@ -28,6 +30,10 @@ export function parseFinderRequest(params: FinderSearchParams) {
     diskGb: diskGb === undefined ? undefined : Number(diskGb),
     workload: value("workload"),
   };
+  const runtime = value("runtime");
+  const context = value("context");
+  if (runtime !== undefined) candidate.runtime = runtime;
+  if (context !== undefined) candidate.context = context;
 
   return { submitted, candidate, validation: submitted ? validateConfig(candidate) : undefined };
 }

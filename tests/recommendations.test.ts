@@ -28,6 +28,26 @@ test("returns typed field errors while preserving the API error list", () => {
   }
 });
 test("makes Apple Silicon runtimes available", () => { assert.deepEqual(runtimeEligibility(mac, mlx), ["MLX"]); assert.ok(runtimeEligibility(mac, gguf).includes("Ollama")); });
+test("filters artifacts to a chosen runtime while requests without a runtime remain neutral", () => {
+  assert.deepEqual(rankArtifacts([gguf, mlx], { ...mac, runtime: "mlx" }).map((item) => item.format), ["mlx"]);
+  assert.deepEqual(rankArtifacts([gguf, mlx], { ...mac, runtime: "ollama" }).map((item) => item.format), ["gguf"]);
+  assert.deepEqual(rankArtifacts([gguf, mlx], mac).map((item) => item.format).sort(), ["gguf", "mlx"]);
+  assert.equal(rankArtifacts([gguf], { ...mac, runtime: "ollama" })[0].guidance.length, 1);
+});
+test("context presets increase conservative memory use and can exclude a former fit", () => {
+  const contextSensitive = { ...gguf, sizeBytes: 12_900_000_000, sizeGb: 12.9, paramsB: undefined };
+  const small = rankArtifacts([contextSensitive], { ...mac, memoryGb: 16, diskGb: 20, context: "small" })[0];
+  const long = rankArtifacts([contextSensitive], { ...mac, memoryGb: 16, diskGb: 20, context: "long" });
+  assert.ok(small.memoryGb < 16);
+  assert.equal(long.length, 0);
+  assert.equal(small.explanation.fit.memory.headroomGb, Math.round((16 - small.memoryGb) * 10) / 10);
+  assert.equal(small.explanation.fit.context.preset, "small");
+});
+test("validates optional runtime and context preferences without requiring them for legacy callers", () => {
+  assert.equal(validateConfig(mac).valid, true);
+  assert.equal(validateConfig({ ...mac, runtime: "other" }).valid, false);
+  assert.equal(validateConfig({ ...mac, context: "huge" }).valid, false);
+});
 test("enforces exact disk boundaries and estimates from exact bytes", () => { assert.equal(rankArtifacts([gguf], { ...mac, diskGb: 4.999999999 }).length, 0); assert.equal(rankArtifacts([gguf], { ...mac, diskGb: 5 }).length, 1); assert.ok(estimateMemoryGb({ ...gguf, sizeGb: 1 }) > 5); });
 test("ranks coding models and carries gated warning plus runtime commands", () => { const generic = { ...gguf, id: "org/Chat-8B-GGUF", modelId: "org/Chat-8B-GGUF", title: "Chat 8B", paramsB: 8, tags: [] }; const gated = { ...gguf, gated: true }; const ranked = rankArtifacts([generic, gated], mac); assert.equal(ranked[0].title, "Coder 7B"); assert.ok(ranked[0].notes.some((note) => note.startsWith("Gated"))); assert.ok(ranked[0].guidance.some((g) => g.runtime === "llama.cpp" && g.command.includes("-hf"))); });
 test("uses Hugging Face task metadata as a bounded workload preference", () => {
@@ -61,7 +81,7 @@ test("returns typed fit explanations and actionable exclusion categories", () =>
   assert.equal(result.exclusions.insufficientMemory, 1);
   assert.equal(result.exclusions.invalidSize, 1);
   assert.equal(result.recommendations[0].explanation.fit.disk.availableBytes, 12_000_000_000);
-  assert.equal(result.recommendations[0].explanation.fit.memory.assumption.includes("4k-context"), true);
+  assert.equal(result.recommendations[0].explanation.fit.memory.assumption.includes("normal-context"), true);
   assert.equal(result.recommendations[0].explanation.fit.workload.category, "coding-oriented");
   assert.ok(result.recommendations[0].explanation.rankingFactors.length >= 3);
 });

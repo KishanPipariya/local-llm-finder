@@ -4,7 +4,7 @@ import { getRecommendations } from "@/lib/recommendation-service";
 import { catalogueUnavailableMessage, parseFinderRequest, type FinderSearchParams } from "@/lib/request";
 import type { MacConfig } from "@/lib/recommendations";
 
-const initial: MacConfig = { chip: "m4", memoryGb: 16, diskGb: 80, workload: "balanced" };
+const initial: MacConfig = { chip: "m4", memoryGb: 16, diskGb: 80, workload: "balanced", runtime: "ollama", context: "normal" };
 
 export default async function Home({ searchParams }: { searchParams: Promise<FinderSearchParams> }) {
   const params = await searchParams;

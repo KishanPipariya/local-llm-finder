@@ -13,6 +13,18 @@ test("GET parsing keeps the first repeated query value and numeric coercion", ()
   assert.deepEqual(parsed.validation, validateConfig(valid));
 });
 
+test("GET parsing and POST validation keep runtime and context preferences aligned", async () => {
+  const configured = { ...valid, runtime: "llamaCpp", context: "long" } as const;
+  const parsed = parseFinderRequest(Object.fromEntries(Object.entries(configured).map(([key, value]) => [key, String(value)])));
+  assert.deepEqual(parsed.validation, validateConfig(configured));
+  const handler = createPostHandler(async () => ({ recommendations: [], exclusions: { insufficientDisk: 0, insufficientMemory: 0, invalidSize: 0, unsupportedFormat: 0 }, refreshedAt: "2026-08-01T00:00:00Z", stale: false }));
+  assert.equal((await handler(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify(configured) }))).status, 200);
+  const invalid = { ...configured, runtime: "unsupported" };
+  const response = await handler(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify(invalid) }));
+  assert.deepEqual(parsed.candidate, configured);
+  assert.equal(response.status, 400);
+});
+
 test("GET validation remains aligned with POST validation", async () => {
   const handler = createPostHandler(async () => ({ recommendations: [], exclusions: { insufficientDisk: 0, insufficientMemory: 0, invalidSize: 0, unsupportedFormat: 0 }, refreshedAt: "2026-08-01T00:00:00Z", stale: false }));
   for (const input of [valid, { chip: "m4" }, { ...valid, memoryGb: 99, diskGb: 0, workload: "other" }]) {

@@ -3,10 +3,16 @@ export type MacConfig = {
   memoryGb: number;
   diskGb: number;
   workload: "chat" | "coding" | "balanced";
+  /** Optional so existing URLs and API callers remain runtime-neutral. */
+  runtime?: Runtime;
+  /** Optional so existing URLs retain the established normal-context estimate. */
+  context?: ContextPreset;
 };
 
 export type Chip = keyof typeof chipProfiles;
-export type ConfigField = "chip" | "memoryGb" | "diskGb" | "workload";
+export type Runtime = "ollama" | "lmStudio" | "llamaCpp" | "mlx";
+export type ContextPreset = "small" | "normal" | "long";
+export type ConfigField = "chip" | "memoryGb" | "diskGb" | "workload" | "runtime" | "context";
 export type ConfigFieldErrors = Partial<Record<ConfigField, string>>;
 
 type ChipProfile = {
@@ -77,6 +83,7 @@ export type RecommendationExplanation = {
   fit: {
     disk: { availableBytes: number; headroomBytes: number };
     memory: { availableGb: number; headroomGb: number; assumption: string };
+    context: { preset: ContextPreset; label: string };
     runtimes: Recommendation["runtimes"];
     workload: { category: WorkloadCategory; relevance: string };
     pace: { bandwidthGbps: number; inputs: string };
@@ -90,6 +97,11 @@ export type ExclusionSummary = Record<ExclusionReason, number>;
 export type RankingResult = { recommendations: Recommendation[]; exclusions: ExclusionSummary };
 
 const workloads = ["chat", "coding", "balanced"] as const;
+export const runtimes: readonly Runtime[] = ["ollama", "lmStudio", "llamaCpp", "mlx"];
+export const contextPresets: readonly ContextPreset[] = ["small", "normal", "long"];
+const runtimeNames: Record<Runtime, Recommendation["runtimes"][number]> = { ollama: "Ollama", lmStudio: "LM Studio", llamaCpp: "llama.cpp", mlx: "MLX" };
+const contextOverheadGb: Record<ContextPreset, number> = { small: 0.8, normal: 1.4, long: 3.2 };
+const contextLabels: Record<ContextPreset, string> = { small: "Small", normal: "Normal", long: "Long" };
 
 export function validateConfig(value: unknown): { valid: true; data: MacConfig } | { valid: false; errors: string[]; fieldErrors: ConfigFieldErrors } {
   const v = value as Partial<MacConfig>;
@@ -100,6 +112,8 @@ export function validateConfig(value: unknown): { valid: true; data: MacConfig }
   if (!(profile?.memoryOptionsGb as readonly number[] | undefined)?.includes(v?.memoryGb ?? Number.NaN)) fieldErrors.memoryGb = "Choose a memory configuration supported by that chip.";
   if (!Number.isFinite(v?.diskGb) || (v.diskGb ?? 0) < 1 || (v.diskGb ?? 0) > 4000) fieldErrors.diskGb = "Free disk space must be between 1 and 4,000 GB.";
   if (!workloads.includes(v?.workload as typeof workloads[number])) fieldErrors.workload = "Choose a workload.";
+  if (v?.runtime !== undefined && !runtimes.includes(v.runtime as Runtime)) fieldErrors.runtime = "Choose a supported runtime.";
+  if (v?.context !== undefined && !contextPresets.includes(v.context as ContextPreset)) fieldErrors.context = "Choose a context preset.";
   errors.push(...Object.values(fieldErrors));
   return errors.length ? { valid: false, errors, fieldErrors } : { valid: true, data: v as MacConfig };
 }
@@ -111,10 +125,10 @@ export function runtimeEligibility(config: MacConfig, artifact: Artifact): Recom
   return runtimes;
 }
 
-export function estimateMemoryGb(artifact: Artifact): number {
-  // File mapping plus KV/context/runtime overhead; deliberately conservative for a 4k context.
+export function estimateMemoryGb(artifact: Artifact, context: ContextPreset = "normal"): number {
+  // File mapping plus KV/context/runtime overhead; deliberately conservative.
   const sizeGb = artifact.sizeBytes / 1e9;
-  return Math.round((sizeGb + Math.max(1.4, sizeGb * 0.22) + (artifact.paramsB ? Math.min(2.5, artifact.paramsB * 0.025) : 0)) * 10) / 10;
+  return Math.round((sizeGb + Math.max(contextOverheadGb[context], sizeGb * 0.22) + (artifact.paramsB ? Math.min(2.5, artifact.paramsB * 0.025) : 0)) * 10) / 10;
 }
 
 export function expectedPace(profile: ChipProfile, estimatedMemoryGb: number): Recommendation["pace"] {
@@ -191,23 +205,31 @@ function emptyExclusions(): ExclusionSummary {
   return { insufficientDisk: 0, insufficientMemory: 0, invalidSize: 0, unsupportedFormat: 0 };
 }
 
+function shellQuote(value: string) {
+  return `'${value.replaceAll("'", "'\\\"'\\\"'")}'`;
+}
+
 export function buildGuidance(item: Artifact, runtimes: Recommendation["runtimes"]): Recommendation["guidance"] {
   const q = item.quantization ? ` (${item.quantization})` : "";
   const artifact = item.filename ? `${item.modelId}/${item.filename}` : item.modelId;
+  const filename = item.filename ?? "model.gguf";
   return runtimes.map((runtime) => {
-    if (runtime === "Ollama") return { runtime, command: `Download ${artifact} from ${item.sourceUrl}, then import that GGUF with an Ollama Modelfile.` };
-    if (runtime === "LM Studio") return { runtime, command: `lms get ${artifact}  # or open the exact file link in LM Studio${q}` };
-    if (runtime === "llama.cpp") return { runtime, command: `llama-cli -hf ${artifact} -p "Hello"` };
-    return { runtime, command: `uvx mlx_lm.generate --model ${item.modelId} --prompt "Hello"` };
+    if (runtime === "Ollama") return { runtime, command: `curl -L ${shellQuote(item.sourceUrl)} -o ${shellQuote(filename)} && printf '%s\\n' ${shellQuote(`FROM ./${filename}`)} > Modelfile && ollama create local-model -f Modelfile && ollama run local-model` };
+    if (runtime === "LM Studio") return { runtime, command: `lms get ${shellQuote(artifact)}  # or open the exact file link in LM Studio${q}` };
+    if (runtime === "llama.cpp") return { runtime, command: `llama-cli -hf ${shellQuote(artifact)} -p "Hello"` };
+    return { runtime, command: `uvx mlx_lm.generate --model ${shellQuote(item.modelId)} --prompt "Hello"` };
   });
 }
 
 export function rankArtifactsWithExplanations(artifacts: Artifact[], config: MacConfig, now = Date.now()): RankingResult {
   const profile = chipProfiles[config.chip];
+  const selectedRuntime = config.runtime;
   const exclusions = emptyExclusions();
   const eligible = artifacts.flatMap((item) => {
-    const runtimes = runtimeEligibility(config, item);
-    const memoryGb = estimateMemoryGb(item);
+    const availableRuntimes = runtimeEligibility(config, item);
+    const runtimes = selectedRuntime ? availableRuntimes.filter((runtime) => runtime === runtimeNames[selectedRuntime]) : availableRuntimes;
+    const context = config.context ?? "normal";
+    const memoryGb = estimateMemoryGb(item, context);
     if (!Number.isSafeInteger(item.sizeBytes) || item.sizeBytes <= 0) { exclusions.invalidSize += 1; return []; }
     if (!runtimes.length) { exclusions.unsupportedFormat += 1; return []; }
     if (item.sizeBytes > config.diskGb * 1e9) { exclusions.insufficientDisk += 1; return []; }
@@ -215,8 +237,8 @@ export function rankArtifactsWithExplanations(artifacts: Artifact[], config: Mac
     const tight = memoryGb > config.memoryGb * 0.82;
     const slow = memoryGb > config.memoryGb * 0.94;
     const notes: string[] = [];
-    if (tight) notes.push("Tight memory: close other apps and use a modest context window.");
-    if (slow) notes.push("May swap memory or run slowly at larger contexts.");
+    if (tight) notes.push("May be tight: close other apps before running this model.");
+    if (slow) notes.push("May swap memory or run slowly with this context setting.");
     if (item.gated) notes.push("Gated: accept the model licence and sign in to Hugging Face first.");
     const performance: Recommendation["performance"] = slow ? "Likely slow" : tight ? "Tight memory" : "Comfortable";
     const pace = expectedPace(profile, memoryGb);
@@ -230,7 +252,7 @@ export function rankArtifactsWithExplanations(artifacts: Artifact[], config: Mac
       "More recently updated catalogue entries receive a small, bounded freshness signal.",
       "Download count is used as a light popularity signal, not a quality benchmark.",
     ];
-    return [{ ...item, runtimes, memoryGb, performance, pace, notes, why: `${item.paramsB ? `${item.paramsB}B parameters` : "A current compact model"}; ${workloadRelevance(category, config.workload)} ${profile.name}'s ${profile.bandwidthGbps} GB/s memory bandwidth suggests ${pace.toLowerCase()} expected pace for this footprint.`, guidance: buildGuidance(item, runtimes), explanation: { fit: { disk: { availableBytes: config.diskGb * 1e9, headroomBytes: diskHeadroom }, memory: { availableGb: config.memoryGb, headroomGb: memoryHeadroom, assumption: "File mapping plus conservative runtime, 4k-context, and KV-cache overhead." }, runtimes, workload: { category, relevance: workloadRelevance(category, config.workload) }, pace: { bandwidthGbps: profile.bandwidthGbps, inputs: "Published family memory bandwidth relative to estimated model memory." } }, rankingFactors, familyKey: familyKey(item) } }];
+    return [{ ...item, runtimes, memoryGb, performance, pace, notes, why: `${item.paramsB ? `${item.paramsB}B parameters` : "A current compact model"}; ${workloadRelevance(category, config.workload)} It leaves ${memoryHeadroom.toFixed(1)} GB of estimated memory headroom at the ${contextLabels[context].toLowerCase()} context preset.`, guidance: buildGuidance(item, runtimes), explanation: { fit: { disk: { availableBytes: config.diskGb * 1e9, headroomBytes: diskHeadroom }, memory: { availableGb: config.memoryGb, headroomGb: memoryHeadroom, assumption: `File mapping plus conservative runtime, ${contextLabels[context].toLowerCase()}-context, and KV-cache overhead.` }, context: { preset: context, label: contextLabels[context] }, runtimes, workload: { category, relevance: workloadRelevance(category, config.workload) }, pace: { bandwidthGbps: profile.bandwidthGbps, inputs: "Published family memory bandwidth relative to estimated model memory." } }, rankingFactors, familyKey: familyKey(item) } }];
   });
   const grouped = new Map<string, Recommendation>();
   for (const item of eligible.sort((a, b) => {
