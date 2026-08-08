@@ -99,7 +99,8 @@ export type ExclusionSummary = Record<ExclusionReason, number>;
 export type RankingResult = { recommendations: Recommendation[]; exclusions: ExclusionSummary };
 
 const workloads = ["chat", "coding", "balanced"] as const;
-export const runtimes: readonly Runtime[] = ["ollama", "lmStudio", "llamaCpp", "mlx"];
+/** Preferred display order for runtime choices and compatible-runtime guidance. */
+export const runtimes: readonly Runtime[] = ["llamaCpp", "mlx", "lmStudio", "ollama"];
 export const contextPresets: readonly ContextPreset[] = ["small", "normal", "long"];
 const runtimeNames: Record<Runtime, Recommendation["runtimes"][number]> = { ollama: "Ollama", lmStudio: "LM Studio", llamaCpp: "llama.cpp", mlx: "MLX" };
 const contextOverheadGb: Record<ContextPreset, number> = { small: 0.8, normal: 1.4, long: 3.2 };
@@ -123,9 +124,7 @@ export function validateConfig(value: unknown): { valid: true; data: MacConfig }
 export function runtimeEligibility(config: MacConfig, artifact: Artifact): Recommendation["runtimes"] {
   if (artifact.pullName) return ["Ollama"];
   if (artifact.format === "mlx") return ["MLX"];
-  const runtimes: Recommendation["runtimes"] = ["LM Studio", "llama.cpp"];
-  runtimes.unshift("Ollama");
-  return runtimes;
+  return ["llama.cpp", "LM Studio", "Ollama"];
 }
 
 export function estimateMemoryGb(artifact: Artifact, context: ContextPreset = "normal"): number {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildGuidance, chipProfiles, estimateMemoryGb, rankArtifacts, rankArtifactsWithExplanations, runtimeEligibility, validateConfig, type Artifact, type MacConfig } from "../lib/recommendations";
+import { buildGuidance, chipProfiles, estimateMemoryGb, rankArtifacts, rankArtifactsWithExplanations, runtimeEligibility, runtimes, validateConfig, type Artifact, type MacConfig } from "../lib/recommendations";
 import { CatalogueCache, isFresh } from "../lib/catalogue-cache";
 import { normalizationExclusions, normalizeModels, REFRESH_TIMEOUT_MS, retrieveCatalogue } from "../lib/catalogue";
 import { createPostHandler } from "../app/api/recommendations/route";
@@ -28,7 +28,7 @@ test("returns typed field errors while preserving the API error list", () => {
     assert.deepEqual(invalid.errors, Object.values(invalid.fieldErrors));
   }
 });
-test("makes Apple Silicon runtimes available", () => { assert.deepEqual(runtimeEligibility(mac, mlx), ["MLX"]); assert.ok(runtimeEligibility(mac, gguf).includes("Ollama")); assert.deepEqual(runtimeEligibility(mac, nativeOllama), ["Ollama"]); });
+test("makes Apple Silicon runtimes available in preferred display order", () => { assert.deepEqual(runtimes, ["llamaCpp", "mlx", "lmStudio", "ollama"]); assert.deepEqual(runtimeEligibility(mac, mlx), ["MLX"]); assert.deepEqual(runtimeEligibility(mac, gguf), ["llama.cpp", "LM Studio", "Ollama"]); assert.deepEqual(runtimeEligibility(mac, nativeOllama), ["Ollama"]); });
 test("filters artifacts to a chosen runtime while requests without a runtime remain neutral", () => {
   assert.deepEqual(rankArtifacts([gguf, mlx], { ...mac, runtime: "mlx" }).map((item) => item.format), ["mlx"]);
   assert.deepEqual(rankArtifacts([gguf, mlx, nativeOllama], { ...mac, runtime: "ollama" }).map((item) => item.format), ["gguf", "gguf"]);

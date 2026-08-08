@@ -45,7 +45,8 @@ have visible expand/collapse indicators and remain fully operable by mouse and
 keyboard without client-side JavaScript.
 
 The server-rendered finder presentation groups configuration controls into
-Hardware, Use and context, and Runtime sections. The hero repeats the
+Hardware, Use and context, and Runtime sections. The Runtime choices present
+llama.cpp and MLX before LM Studio and Ollama. The hero repeats the
 no-account, no-tracking, and no-saved-configuration promise beside the primary
 task. Results keep the complete ranked shortlist, but visually mark the first
 already-ranked card as the “Top pick”; this is a presentation label only and
