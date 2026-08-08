@@ -7,13 +7,15 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "check:node": "node ./scripts/check-node-version.mjs",
+    "build": "npm run check:node && next build",
     "start": "next start",
-    "test": "npm run test:unit && npm run test:a11y",
+    "test": "npm run check:node && npm run test:unit && npm run test:a11y",
     "test:unit": "node --import tsx --test --test-concurrency=4 --experimental-test-coverage --test-coverage-lines=98.28 --test-coverage-branches=90.10 --test-coverage-functions=95.74 tests/recommendations.test.ts tests/request.test.ts tests/catalogue.test.ts",
     "test:a11y": "npm run build && tsx --test --test-concurrency=4 tests/accessibility.test.ts",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "lint": "npm run check:node && eslint . --ignore-pattern dist --ignore-pattern .next",
     "verify": "npm run lint && npm test && npm run build",
+    "smoke:deploy": "npm run check:node && node ./scripts/deploy-smoke.mjs",
     "prepare": "husky"
   },
   "dependencies": {
