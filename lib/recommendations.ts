@@ -65,6 +65,8 @@ export type Artifact = {
   sourceUrl: string;
   repositoryUrl: string;
   filename?: string;
+  /** Native Ollama registry target. Present only for verified Ollama entries. */
+  pullName?: string;
 };
 
 export type Recommendation = Artifact & {
@@ -119,6 +121,7 @@ export function validateConfig(value: unknown): { valid: true; data: MacConfig }
 }
 
 export function runtimeEligibility(config: MacConfig, artifact: Artifact): Recommendation["runtimes"] {
+  if (artifact.pullName) return ["Ollama"];
   if (artifact.format === "mlx") return ["MLX"];
   const runtimes: Recommendation["runtimes"] = ["LM Studio", "llama.cpp"];
   runtimes.unshift("Ollama");
@@ -214,6 +217,7 @@ export function buildGuidance(item: Artifact, runtimes: Recommendation["runtimes
   const artifact = item.filename ? `${item.modelId}/${item.filename}` : item.modelId;
   const filename = item.filename ?? "model.gguf";
   return runtimes.map((runtime) => {
+    if (runtime === "Ollama" && item.pullName) return { runtime, command: `ollama pull ${item.pullName} && ollama run ${item.pullName}` };
     if (runtime === "Ollama") return { runtime, command: `curl -L ${shellQuote(item.sourceUrl)} -o ${shellQuote(filename)} && printf '%s\\n' ${shellQuote(`FROM ./${filename}`)} > Modelfile && ollama create local-model -f Modelfile && ollama run local-model` };
     if (runtime === "LM Studio") return { runtime, command: `lms get ${shellQuote(artifact)}  # or open the exact file link in LM Studio${q}` };
     if (runtime === "llama.cpp") return { runtime, command: `llama-cli -hf ${shellQuote(artifact)} -p "Hello"` };
@@ -240,6 +244,7 @@ export function rankArtifactsWithExplanations(artifacts: Artifact[], config: Mac
     if (tight) notes.push("May be tight: close other apps before running this model.");
     if (slow) notes.push("May swap memory or run slowly with this context setting.");
     if (item.gated) notes.push("Gated: accept the model licence and sign in to Hugging Face first.");
+    if (item.licence) notes.push(`Licence: ${item.licence}. Check its terms before use.`);
     const performance: Recommendation["performance"] = slow ? "Likely slow" : tight ? "Tight memory" : "Comfortable";
     const pace = expectedPace(profile, memoryGb);
     const category = workloadCategory(item);

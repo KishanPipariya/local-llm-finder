@@ -144,8 +144,11 @@ try {
   await initial.goto(`${origin}/?chip=m4&memoryGb=16&diskGb=12&workload=chat`, { waitUntil: "networkidle" });
   assert.equal(await initial.locator(".card.top-pick").count(), 1, "the first ranked result is visually marked as the top pick");
   assert.equal(await initial.locator(".card").first().locator(".top-pick-label").textContent(), "Top pick");
+  assert.equal(await initial.getByRole("link", { name: "View llama3.2:3b on Ollama (opens in a new tab)" }).count(), 1, "native Ollama entries identify their registry source");
   await assertUnchangedBox(initial, ".card", () => initial.locator(".card").first().hover(), "hovering a recommendation card");
   await assertCardDisclosure(initial, "Installation guidance");
+  await initial.locator(".card").first().getByText("Installation guidance", { exact: true }).click();
+  assert.equal(await initial.locator(".card").first().locator(".guide code").textContent(), "ollama pull llama3.2:3b && ollama run llama3.2:3b", "server-rendered native installation guidance uses the verified pull target");
   await assertCardDisclosure(initial, "Technical details and ranking factors");
   await assertNoAxeViolations(initial, "recommendation-card disclosures");
 

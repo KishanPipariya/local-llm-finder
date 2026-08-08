@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chipProfiles, estimateMemoryGb, rankArtifacts, rankArtifactsWithExplanations, runtimeEligibility, validateConfig, type Artifact, type MacConfig } from "../lib/recommendations";
+import { buildGuidance, chipProfiles, estimateMemoryGb, rankArtifacts, rankArtifactsWithExplanations, runtimeEligibility, validateConfig, type Artifact, type MacConfig } from "../lib/recommendations";
 import { CatalogueCache, isFresh } from "../lib/catalogue-cache";
 import { normalizationExclusions, normalizeModels, REFRESH_TIMEOUT_MS, retrieveCatalogue } from "../lib/catalogue";
 import { createPostHandler } from "../app/api/recommendations/route";
@@ -8,6 +8,7 @@ import { createPostHandler } from "../app/api/recommendations/route";
 const mac: MacConfig = { chip: "m4", memoryGb: 16, diskGb: 12, workload: "coding" };
 const gguf: Artifact = { id: "org/Coder-7B-GGUF/model.Q4_K_M.gguf", modelId: "org/Coder-7B-GGUF", title: "Coder 7B", format: "gguf", sizeBytes: 5_000_000_000, sizeGb: 5, paramsB: 7, downloads: 3000, updatedAt: "2026-08-01T00:00:00Z", gated: false, tags: ["code"], repositoryUrl: "https://huggingface.co/org/Coder-7B-GGUF", sourceUrl: "https://huggingface.co/org/Coder-7B-GGUF/resolve/main/model.Q4_K_M.gguf", filename: "model.Q4_K_M.gguf" };
 const mlx: Artifact = { ...gguf, id: "mlx-community/Coder-7B-4bit", modelId: "mlx-community/Coder-7B-4bit", format: "mlx", sizeBytes: 4_500_000_000, sizeGb: 4.5, filename: undefined };
+const nativeOllama: Artifact = { ...gguf, id: "ollama/qwen3:4b", modelId: "qwen3:4b", title: "Qwen3 4B", sizeBytes: 3_000_000_000, sizeGb: 3, paramsB: 4, sourceUrl: "https://ollama.com/library/qwen3:4b", repositoryUrl: "https://ollama.com/library/qwen3:4b", filename: undefined, pullName: "qwen3:4b" };
 
 test("accepts every chip's supported memory options and rejects impossible pairs", () => {
   for (const [chip, profile] of Object.entries(chipProfiles)) {
@@ -27,11 +28,11 @@ test("returns typed field errors while preserving the API error list", () => {
     assert.deepEqual(invalid.errors, Object.values(invalid.fieldErrors));
   }
 });
-test("makes Apple Silicon runtimes available", () => { assert.deepEqual(runtimeEligibility(mac, mlx), ["MLX"]); assert.ok(runtimeEligibility(mac, gguf).includes("Ollama")); });
+test("makes Apple Silicon runtimes available", () => { assert.deepEqual(runtimeEligibility(mac, mlx), ["MLX"]); assert.ok(runtimeEligibility(mac, gguf).includes("Ollama")); assert.deepEqual(runtimeEligibility(mac, nativeOllama), ["Ollama"]); });
 test("filters artifacts to a chosen runtime while requests without a runtime remain neutral", () => {
   assert.deepEqual(rankArtifacts([gguf, mlx], { ...mac, runtime: "mlx" }).map((item) => item.format), ["mlx"]);
-  assert.deepEqual(rankArtifacts([gguf, mlx], { ...mac, runtime: "ollama" }).map((item) => item.format), ["gguf"]);
-  assert.deepEqual(rankArtifacts([gguf, mlx], mac).map((item) => item.format).sort(), ["gguf", "mlx"]);
+  assert.deepEqual(rankArtifacts([gguf, mlx, nativeOllama], { ...mac, runtime: "ollama" }).map((item) => item.format), ["gguf", "gguf"]);
+  assert.deepEqual(rankArtifacts([gguf, mlx, nativeOllama], mac).map((item) => item.format).sort(), ["gguf", "gguf", "mlx"]);
   assert.equal(rankArtifacts([gguf], { ...mac, runtime: "ollama" })[0].guidance.length, 1);
 });
 test("context presets increase conservative memory use and can exclude a former fit", () => {
@@ -49,7 +50,7 @@ test("validates optional runtime and context preferences without requiring them 
   assert.equal(validateConfig({ ...mac, context: "huge" }).valid, false);
 });
 test("enforces exact disk boundaries and estimates from exact bytes", () => { assert.equal(rankArtifacts([gguf], { ...mac, diskGb: 4.999999999 }).length, 0); assert.equal(rankArtifacts([gguf], { ...mac, diskGb: 5 }).length, 1); assert.ok(estimateMemoryGb({ ...gguf, sizeGb: 1 }) > 5); });
-test("ranks coding models and carries gated warning plus runtime commands", () => { const generic = { ...gguf, id: "org/Chat-8B-GGUF", modelId: "org/Chat-8B-GGUF", title: "Chat 8B", paramsB: 8, tags: [] }; const gated = { ...gguf, gated: true }; const ranked = rankArtifacts([generic, gated], mac); assert.equal(ranked[0].title, "Coder 7B"); assert.ok(ranked[0].notes.some((note) => note.startsWith("Gated"))); assert.ok(ranked[0].guidance.some((g) => g.runtime === "llama.cpp" && g.command.includes("-hf"))); });
+test("ranks coding models and carries gated and licence warnings plus runtime commands", () => { const generic = { ...gguf, id: "org/Chat-8B-GGUF", modelId: "org/Chat-8B-GGUF", title: "Chat 8B", paramsB: 8, tags: [] }; const gated = { ...gguf, gated: true, licence: "apache-2.0" }; const ranked = rankArtifacts([generic, gated], mac); assert.equal(ranked[0].title, "Coder 7B"); assert.ok(ranked[0].notes.some((note) => note.startsWith("Gated"))); assert.ok(ranked[0].notes.some((note) => note.startsWith("Licence: apache-2.0"))); assert.ok(ranked[0].guidance.some((g) => g.runtime === "llama.cpp" && g.command.includes("-hf"))); });
 test("uses Hugging Face task metadata as a bounded workload preference", () => {
   const coding = { ...gguf, id: "org/Code-GGUF/file.gguf", modelId: "org/Code-GGUF", title: "Plain model", tags: ["coding"], pipelineTag: undefined };
   const chat = { ...gguf, id: "org/Chat-GGUF/file.gguf", modelId: "org/Chat-GGUF", title: "Plain model", tags: [], pipelineTag: "text2text-generation" };
@@ -72,6 +73,12 @@ test("keeps fit tied to memory but changes pace and ranking by chip bandwidth", 
   assert.equal(highBandwidth[0].title, "Chat 8B");
 });
 test("names the exact GGUF file in links and runtime guidance", () => { const recommendation = rankArtifacts([gguf], mac)[0]; assert.equal(recommendation.sourceUrl, gguf.sourceUrl); assert.match(recommendation.guidance.find((guide) => guide.runtime === "llama.cpp")!.command, /model\.Q4_K_M\.gguf/); });
+test("uses native pull-and-run guidance only for verified Ollama entries", () => {
+  assert.deepEqual(buildGuidance(nativeOllama, ["Ollama"]), [{ runtime: "Ollama", command: "ollama pull qwen3:4b && ollama run qwen3:4b" }]);
+  assert.match(buildGuidance(gguf, ["Ollama"])[0].command, /ollama create local-model/);
+  assert.doesNotMatch(buildGuidance(gguf, ["Ollama"])[0].command, /ollama pull/);
+  assert.deepEqual(rankArtifacts([nativeOllama], { ...mac, runtime: "lmStudio" }), []);
+});
 test("returns typed fit explanations and actionable exclusion categories", () => {
   const tooLarge = { ...gguf, id: "org/Large-GGUF/file.gguf", modelId: "org/Large-GGUF", sizeBytes: 13_000_000_000, sizeGb: 13 };
   const tooHungry = { ...gguf, id: "org/Memory-GGUF/file.gguf", modelId: "org/Memory-GGUF", sizeBytes: 11_500_000_000, sizeGb: 11.5, paramsB: 100 };

@@ -35,6 +35,6 @@ export default async function Home({ searchParams }: { searchParams: Promise<Fin
     </section>
     <FinderForm config={validation.valid ? validation.data : candidate} submitted={submitted} errors={validation.valid ? [] : validation.errors} fieldErrors={validation.valid ? {} : validation.fieldErrors} catalogueError={catalogueError} />
     {result && <Results result={result} />}
-    <footer><span>Compatibility is an estimate, not a benchmark.</span><span><abbr title="GPT-Generated Unified Format">GGUF</abbr> for Ollama, LM Studio, and llama.cpp · <abbr title="Machine Learning eXchange">MLX</abbr> for Apple Silicon</span></footer>
+    <footer><span>Compatibility is an estimate, not a benchmark.</span><span>Native Ollama pulls for Ollama · <abbr title="GPT-Generated Unified Format">GGUF</abbr> for LM Studio and llama.cpp · <abbr title="Machine Learning eXchange">MLX</abbr> for Apple Silicon</span></footer>
   </main>;
 }

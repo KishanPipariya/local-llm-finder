@@ -4,8 +4,9 @@
 
 Mac Local LLM Finder is a privacy-first Next.js application that recommends
 current local chat and coding models that fit a chosen Apple Silicon Mac. It
-uses public Hugging Face data, keeps submitted hardware details only within the
-request, and renders recommendations without requiring client-side JavaScript.
+uses verified public Ollama registry manifests and public Hugging Face data,
+keeps submitted hardware details only within the request, and renders
+recommendations without requiring client-side JavaScript.
 
 ## Request and data flow
 
@@ -61,13 +62,13 @@ does not alter scoring, ranking, or API output.
 | `app/page.tsx` | Uses parsed GET query values, retrieves results, and renders page-level errors. |
 | `app/components/finder-form.tsx` | Accessible configuration form and field-level validation messages. |
 | `app/components/hardware-selector.tsx` | Client-side chip/memory filtering and accessible automatic-adjustment announcement. |
-| `app/components/results.tsx` | Results heading, plain-language catalogue status, pace disclaimer, actionable exclusion disclosure, and visual Top pick designation for the first ranked item. |
-| `app/components/recommendation-card.tsx` | Recommendation fit explanation, metric hierarchy, Hugging Face link, and initially collapsed installation and technical/ranking disclosures. |
+| `app/components/results.tsx` | Results heading, plain-language catalogue status and scope disclosure, pace disclaimer, actionable exclusion disclosure, and visual Top pick designation for the first ranked item. |
+| `app/components/recommendation-card.tsx` | Recommendation fit explanation, metric hierarchy, source-aware Ollama/Hugging Face link, licence and gated-model notices, and initially collapsed installation and technical/ranking disclosures. |
 | `app/api/recommendations/route.ts` | Node.js POST JSON endpoint; exposes `createPostHandler` for testing. |
 | `lib/request.ts` | Typed GET-query parsing and shared request-level catalogue-unavailable message. |
 | `lib/recommendations.ts` | Pure validation, memory and pace estimates, eligibility, scoring, ranking, and guidance. |
 | `lib/recommendation-service.ts` | Composition layer joining catalogue retrieval to ranking. |
-| `lib/catalogue.ts` | Server-side Hugging Face requests and conversion to normalized artifacts. |
+| `lib/catalogue.ts` | Server-side Hugging Face retrieval plus curated native Ollama manifest verification and conversion to normalized artifacts. |
 | `lib/catalogue-cache.ts` | Six-hour, process-local cache with request coalescing and stale fallback. |
 | `tests/recommendations.test.ts` | Node tests for domain logic, ranking, cache behavior, and API statuses. |
 | `tests/request.test.ts` | Node tests for GET parsing and GET/POST validation parity. |
@@ -77,6 +78,9 @@ does not alter scoring, ranking, or API output.
 | `docs/showcase-checklist.md` | Demo warm-up, upstream-outage fallback, and installation-path review checklist. |
 | `docs/images/recommended-results.png` | Checked-in fixture-backed screenshot used in the README. |
 | `mise.toml` | Node 24 version-management configuration. |
+| `.nvmrc` | Node 24 configuration for nvm. |
+| `scripts/check-node-version.mjs` | Enforces Node 24 for release checks. |
+| `scripts/deploy-smoke.mjs` | Tests a deployment's GET finder flow and all supported API runtime filters without persisting configurations. |
 
 ## Core domain contracts
 
@@ -106,9 +110,20 @@ omitted, and malformed files are discarded before `Artifact` values are
 created. Normalization excludes unknown, non-integer, and smaller-than-100 MB
 artifacts.
 
-- GGUF: retain every valid `.gguf` file as a separate quantization variant (Q2–Q8,
-  IQ variants, and F16/BF16/F32 labels when present). It supports Ollama, LM
-  Studio, and llama.cpp.
+- Native Ollama: the maintained candidate set is `llama3.2:3b`, `qwen3:4b`,
+  `qwen3:8b`, `gemma3:4b`, `qwen2.5-coder:3b`, `qwen2.5-coder:7b`,
+  `qwen3-coder:30b`, and `devstral:24b`. Every refresh fetches each public
+  registry manifest, validates every recognized Ollama layer and its positive
+  byte size, and uses the complete layer-byte total for disk and conservative
+  memory calculations. A `404` removes a retired candidate; a malformed or
+  transient registry response fails the refresh. Native entries carry a
+  `pullName`, support only Ollama, link to Ollama, and use exactly
+  `ollama pull <pullName> && ollama run <pullName>`.
+- GGUF: retain every valid Hugging Face `.gguf` file as a separate quantization
+  variant (Q2–Q8, IQ variants, and F16/BF16/F32 labels when present). It supports
+  Ollama, LM Studio, and llama.cpp. Its Ollama guidance remains the explicit
+  download-and-`ollama create` import recipe; arbitrary Hugging Face files never
+  use `ollama pull`.
 - MLX: add known positive weights, configuration, and tokenizer runtime-file
   sizes, then require the aggregate artifact to meet the 100 MB minimum. A
   missing size for any recognized required runtime file excludes the artifact.
@@ -121,6 +136,10 @@ artifacts.
   exact-file setup command.
   A model is omitted when the estimate exceeds unified memory.
 - Gated models remain eligible, but carry a sign-in and licence-acceptance note.
+- When Hugging Face supplies a repository revision, exact GGUF file links and
+  MLX repository links use that revision rather than a moving branch; links fall
+  back to `main` or the repository root when it is unavailable. Available
+  licence metadata is shown alongside gated-model notes.
 
 The ranking score combines parameter metadata when available, workload fit, a
 qualitative pace factor, a small bounded update-recency signal, and download
@@ -157,11 +176,14 @@ two add operational notes.
 
 `retrieveCatalogue` makes two server-side Hugging Face list requests: popular
 GGUF repositories and repositories from `mlx-community`. It then loads model
-details (up to four at once) to obtain artifact file sizes. Each request has a
-12-second timeout, while a complete refresh has a five-second deadline that
-aborts all outstanding list and detail requests. An individual detail request
-may fall back to its list result unless that refresh-wide deadline expires; an
-empty usable catalogue fails the full refresh.
+details (up to four at once) to obtain artifact file sizes, while concurrently
+fetching the manifest for each curated native Ollama candidate. Each request has
+a 12-second timeout, while a complete refresh has a five-second deadline that
+aborts all outstanding list, detail, and registry requests. An individual
+Hugging Face detail request may fall back to its list result unless that
+refresh-wide deadline expires; an Ollama registry failure is not tolerated
+because native pull targets must be verified. An empty usable mixed catalogue
+fails the full refresh.
 
 `CatalogueCache` holds the last valid normalized catalogue in memory for six
 hours. A cold cache blocks only for the five-second refresh budget; without a
@@ -178,7 +200,7 @@ If no valid catalogue has ever been acquired, the error is propagated:
 | GET page | Inline, field-specific form errors | Inline temporary catalogue error |
 | `POST /api/recommendations` | `400` with `errors` and `fieldErrors` | `503` with `error` |
 
-No persistence layer, analytics, account service, or client-side Hugging Face
+No persistence layer, analytics, account service, or client-side catalogue
 request is part of this design.
 
 ## Development and verification
@@ -229,6 +251,13 @@ compatibility adapter keeps Next's configured rules working under ESLint 10.
 When changing visible finder UI, also follow
 [`docs/accessibility-release-checklist.md`](docs/accessibility-release-checklist.md).
 Use `mise.toml` as an additional Node 24 version-management configuration.
+
+`npm test`, `npm run lint`, and `npm run build` begin by enforcing Node 24.
+For an invited-demo deployment, run `npm run smoke:deploy -- <deployment-url>`
+after warming the cache. It performs one valid server-rendered GET and API
+requests for Ollama, LM Studio, llama.cpp, and MLX; it reports stale catalogue
+status and fails on a 503, invalid response shape, or an empty compatible
+shortlist. The check only sends request-scoped configurations and saves none.
 
 ## Sharing and showcase assets
 
