@@ -69,8 +69,8 @@ does not alter scoring, ranking, or API output.
 | `lib/request.ts` | Typed GET-query parsing and shared request-level catalogue-unavailable message. |
 | `lib/recommendations.ts` | Pure validation, memory and pace estimates, eligibility, scoring, ranking, and guidance. |
 | `lib/recommendation-service.ts` | Composition layer joining catalogue retrieval to ranking. |
-| `lib/catalogue.ts` | Server-side Hugging Face retrieval plus dynamic Ollama Library discovery, OCI manifest/config verification, and conversion to normalized artifacts. |
-| `lib/catalogue-cache.ts` | Six-hour, process-local cache with request coalescing and stale fallback. |
+| `lib/catalogue.ts` | Server-side Hugging Face retrieval plus dynamic Ollama Library discovery, OCI manifest/config verification, normalized artifacts, and a 24-hour persistent Next.js refresh cache. |
+| `lib/catalogue-cache.ts` | Six-hour, process-local cache with request coalescing, stale fallback, and retry backoff. |
 | `tests/recommendations.test.ts` | Node tests for domain logic, ranking, cache behavior, and API statuses. |
 | `tests/request.test.ts` | Node tests for GET parsing and GET/POST validation parity. |
 | `tests/catalogue.test.ts` | Node tests for catalogue boundary normalization and upstream failure behavior. |
@@ -181,25 +181,28 @@ two add operational notes.
 
 ## Catalogue lifecycle
 
-`retrieveCatalogue` makes two server-side Hugging Face list requests: popular
-GGUF repositories and repositories from `mlx-community`. In parallel it loads
-the public Ollama library page, family tag pages, selected OCI manifests, and
-their config blobs with bounded concurrency (six Ollama and four Hugging Face
-detail requests at once). Each request has a 12-second timeout, while a complete
-refresh has a 30-second deadline that aborts all outstanding work. An individual
-Hugging Face detail request may fall back to its list result unless that
-refresh-wide deadline expires; discovery is atomic, so an Ollama parsing,
-metadata, or non-404 upstream failure rejects the refresh. An empty usable mixed
-catalogue fails the full refresh.
+`retrieveCatalogue` makes two server-side Hugging Face `full=true` list
+requests: popular GGUF repositories and repositories from `mlx-community`.
+The list metadata is normalized directly, so there are no per-repository
+Hugging Face detail requests. In parallel it loads the public Ollama library
+page, family tag pages, selected OCI manifests, and their config blobs with
+bounded concurrency (six Ollama requests at once). Each request has a 12-second
+timeout, while a complete refresh has a 30-second deadline that aborts all
+outstanding work. Discovery is atomic, so an Ollama parsing, metadata, or
+non-404 upstream failure rejects the refresh. An empty usable mixed catalogue
+fails the full refresh.
 
-`CatalogueCache` holds the last valid normalized catalogue in memory for six
-hours. A cold cache blocks only for the 30-second refresh budget; without a
-successful catalogue, the refresh error is propagated. Once a catalogue has
-expired, callers immediately receive the prior catalogue with `stale: true`
-while one shared background refresh runs. A successful background refresh
-replaces the cache and clears the retry backoff. A failed refresh is consumed
-internally, keeps the prior catalogue stale, and waits five minutes before the
-next refresh attempt, avoiding repeated upstream calls during an outage.
+Next.js `unstable_cache` wraps the complete production refresh under a stable
+key with a 24-hour revalidation interval, sharing the full upstream crawl across
+requests, instances, and deployments. Results may therefore be up to a day old.
+`CatalogueCache` holds the last valid normalized catalogue in each process for
+six hours. A cold local cache blocks only for the shared refresh budget; without
+a successful catalogue, the error is propagated. Once a catalogue has expired,
+callers immediately receive the prior catalogue with `stale: true` while one
+shared background refresh runs. A successful background refresh replaces the
+cache and clears the retry backoff. A failed refresh is consumed internally,
+keeps the prior catalogue stale, and waits five minutes before the next refresh
+attempt, avoiding repeated upstream calls during an outage.
 If no valid catalogue has ever been acquired, the error is propagated:
 
 | Entry point | Invalid configuration | No catalogue available |

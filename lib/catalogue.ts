@@ -1,11 +1,11 @@
 import { CatalogueCache, type Catalogue } from "./catalogue-cache";
 import type { Artifact, ExclusionSummary } from "./recommendations";
+import { unstable_cache } from "next/cache";
 import { parse } from "parse5";
 
 const MIN_ARTIFACT_BYTES = 100_000_000;
 const REQUEST_TIMEOUT_MS = 12_000;
 export const REFRESH_TIMEOUT_MS = 30_000;
-const DETAIL_CONCURRENCY = 4;
 const OLLAMA_CONCURRENCY = 6;
 const HUB_BASE = "https://huggingface.co/api/models";
 const OLLAMA_REGISTRY_BASE = "https://registry.ollama.ai/v2/library";
@@ -350,10 +350,6 @@ export async function mapWithConcurrency<T, R>(values: T[], limit: number, worke
   return results;
 }
 
-function uniqueModels(models: HubModel[]) {
-  return [...new Map(models.map((model) => [model.id, model])).values()];
-}
-
 export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeoutMs = REFRESH_TIMEOUT_MS): Promise<Catalogue> {
   const refreshController = new AbortController();
   const deadline = setTimeout(() => refreshController.abort(new Error("Hugging Face catalogue refresh timed out")), refreshTimeoutMs);
@@ -364,23 +360,12 @@ export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeo
     fetchJson(`${base}&author=mlx-community`, fetcher, refreshController.signal).then(parseHubModelList),
     retrieveOllamaArtifacts(fetcher, refreshController.signal),
   ]);
-  const models = uniqueModels([...ggufList, ...mlxList]);
-  const details = await mapWithConcurrency(models, DETAIL_CONCURRENCY, async (model) => {
-    const id = model.id.split("/").map(encodeURIComponent).join("/");
-    try {
-      const detail = normalizeHubModel(await fetchJson(`${HUB_BASE}/${id}?blobs=true`, fetcher, refreshController.signal));
-      return detail ?? model;
-    } catch (error) {
-      if (refreshController.signal.aborted) throw error;
-      return model;
-    }
-  });
-  const ggufModels = details.filter((model) => ggufList.some((listed) => listed.id === model.id));
-  const mlxModels = details.filter((model) => mlxList.some((listed) => listed.id === model.id));
-  const items = [...ollamaItems, ...normalizeModels(ggufModels, "gguf"), ...normalizeModels(mlxModels, "mlx")];
+  // The full list responses include sibling metadata, so normalize their files
+  // directly instead of adding one detail request per repository.
+  const items = [...ollamaItems, ...normalizeModels(ggufList, "gguf"), ...normalizeModels(mlxList, "mlx")];
   if (!items.length) throw new Error("Model catalogues returned no usable artifacts");
-  const ggufExclusions = normalizationExclusions(ggufModels, "gguf");
-  const mlxExclusions = normalizationExclusions(mlxModels, "mlx");
+  const ggufExclusions = normalizationExclusions(ggufList, "gguf");
+  const mlxExclusions = normalizationExclusions(mlxList, "mlx");
   return { items, refreshedAt: new Date().toISOString(), exclusions: { invalidSize: (ggufExclusions.invalidSize ?? 0) + (mlxExclusions.invalidSize ?? 0), unsupportedFormat: (ggufExclusions.unsupportedFormat ?? 0) + (mlxExclusions.unsupportedFormat ?? 0) } };
   } finally {
     clearTimeout(deadline);
@@ -411,5 +396,14 @@ const browserTestCatalogue: Catalogue = {
   refreshedAt: "2026-08-01T00:00:00Z",
 };
 
-const cache = new CatalogueCache(process.env.MAC_LLM_BROWSER_TEST_FIXTURE === "1" ? async () => browserTestCatalogue : retrieveCatalogue);
+const persistentCatalogueRefresh = unstable_cache(
+  retrieveCatalogue,
+  ["mac-local-llm-finder", "catalogue-refresh", "v1"],
+  { revalidate: 24 * 60 * 60 },
+);
+
+// Keep the fixture isolated from the persistent production cache so browser
+// tests remain fully offline. The outer cache retains process-local stale
+// responses and retry backoff when the shared refresh is unavailable.
+const cache = new CatalogueCache(process.env.MAC_LLM_BROWSER_TEST_FIXTURE === "1" ? async () => browserTestCatalogue : persistentCatalogueRefresh);
 export const getCatalogue = () => cache.get();

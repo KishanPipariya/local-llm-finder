@@ -73,7 +73,7 @@ test("discovery deduplicates manifests and removes 404 tags while rejecting othe
   await assert.rejects(retrieveCatalogue(upstream({ fail: 503 }) as typeof fetch));
 });
 
-test("discovery skips retired tag pages but retains atomic registry and detail fallback behavior", async () => {
+test("discovery skips retired tag pages, uses list metadata without Hugging Face detail requests, and retains atomic registry behavior", async () => {
   const tagPageRetired = async (url: string, init?: RequestInit) => {
     if (url.includes("/qwen/tags")) return new Response(null, { status: 404 });
     return upstream()(url, init);
@@ -81,12 +81,14 @@ test("discovery skips retired tag pages but retains atomic registry and detail f
   const retired = await retrieveCatalogue(tagPageRetired as typeof fetch);
   assert.equal(retired.items.find((item) => item.pullName)?.pullName, "llama3.2:latest");
 
-  const detailFailure = async (url: string, init?: RequestInit) => {
-    if (url.includes("huggingface.co/api/models/") && !url.includes("?full=true")) throw new Error("details unavailable");
+  const urls: string[] = [];
+  const listOnly = async (url: string, init?: RequestInit) => {
+    urls.push(url);
     return upstream()(url, init);
   };
-  const fallback = await retrieveCatalogue(detailFailure as typeof fetch);
-  assert.deepEqual(fallback.items.filter((item) => !item.pullName).map((item) => item.sizeBytes).sort((a, b) => a - b), [4_000_000_000, 4_000_002_000]);
+  const catalogue = await retrieveCatalogue(listOnly as typeof fetch);
+  assert.deepEqual(catalogue.items.filter((item) => !item.pullName).map((item) => item.sizeBytes).sort((a, b) => a - b), [4_000_000_000, 4_000_002_000]);
+  assert.equal(urls.some((url) => url.startsWith("https://huggingface.co/api/models/") && !url.includes("?full=true")), false);
   await assert.rejects(retrieveCatalogue((async (url: string, init?: RequestInit) => url === "https://ollama.com/library" ? new Response(null, { status: 503 }) : upstream()(url, init)) as typeof fetch));
 });
 
