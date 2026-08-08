@@ -6,6 +6,19 @@
 
 Your Mac configuration is used only for that request; it is not saved. The finder gives conservative compatibility, storage, and qualitative pace estimates rather than performance benchmarks.
 
+## Alternatives
+
+You can also explore local-model tools and catalogues directly:
+
+- [Local LLM](https://localllm.fun/) for finding models that fit your hardware.
+- [ModelLens](https://modellens.ai/) for model-memory estimates and hardware compatibility.
+- [LLM Fit Check](https://llmfitcheck.com/) for estimating whether a model fits GPU VRAM, Apple unified memory, or system RAM.
+- [Can I Run LLMs Locally?](https://canirunllms.com/) for GPU and Apple Silicon memory-compatibility estimates.
+- [Ollama](https://ollama.com/) for downloading and running supported models locally.
+- [LM Studio](https://lmstudio.ai/) for discovering and running local models through a desktop app.
+- [Hugging Face](https://huggingface.co/models) for browsing model repositories and files.
+- [MLX](https://ml-explore.github.io/mlx/build/html/index.html) for Apple Silicon-focused machine-learning tooling.
+
 ## Highlights
 
 - Complete, shareable GET links and a server-rendered form that work without JavaScript.
