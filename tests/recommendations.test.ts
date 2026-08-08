@@ -176,12 +176,12 @@ test("failed background refreshes stay stale and respect retry backoff", async (
   assert.equal((await stale.get()).stale, true);
   assert.equal(staleCalls, 2);
 });
-test("five-second cold-start deadline aborts requests and preserves the unavailable response", async () => {
+test("thirty-second cold-start deadline aborts requests and preserves the unavailable response", async () => {
   let requestAborted = false;
   const hangingFetch = (_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
     init?.signal?.addEventListener("abort", () => { requestAborted = true; reject(init.signal?.reason); }, { once: true });
   });
-  assert.equal(REFRESH_TIMEOUT_MS, 5_000);
+  assert.equal(REFRESH_TIMEOUT_MS, 30_000);
   await assert.rejects(retrieveCatalogue(hangingFetch as typeof fetch));
   assert.equal(requestAborted, true, "the refresh deadline reaches outstanding requests");
 

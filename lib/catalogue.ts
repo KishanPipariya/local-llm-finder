@@ -1,24 +1,16 @@
 import { CatalogueCache, type Catalogue } from "./catalogue-cache";
 import type { Artifact, ExclusionSummary } from "./recommendations";
+import { parse } from "parse5";
 
 const MIN_ARTIFACT_BYTES = 100_000_000;
 const REQUEST_TIMEOUT_MS = 12_000;
-export const REFRESH_TIMEOUT_MS = 5_000;
+export const REFRESH_TIMEOUT_MS = 30_000;
 const DETAIL_CONCURRENCY = 4;
+const OLLAMA_CONCURRENCY = 6;
 const HUB_BASE = "https://huggingface.co/api/models";
 const OLLAMA_REGISTRY_BASE = "https://registry.ollama.ai/v2/library";
 const OLLAMA_LIBRARY_BASE = "https://ollama.com/library";
 
-export const ollamaCandidates = [
-  { pullName: "llama3.2:3b", title: "Llama 3.2 3B", paramsB: 3, tags: ["instruct", "chat"] },
-  { pullName: "qwen3:4b", title: "Qwen3 4B", paramsB: 4, tags: ["instruct", "chat"] },
-  { pullName: "qwen3:8b", title: "Qwen3 8B", paramsB: 8, tags: ["instruct", "chat"] },
-  { pullName: "gemma3:4b", title: "Gemma 3 4B", paramsB: 4, tags: ["instruct", "chat"] },
-  { pullName: "qwen2.5-coder:3b", title: "Qwen2.5 Coder 3B", paramsB: 3, tags: ["code", "coder"] },
-  { pullName: "qwen2.5-coder:7b", title: "Qwen2.5 Coder 7B", paramsB: 7, tags: ["code", "coder"] },
-  { pullName: "qwen3-coder:30b", title: "Qwen3 Coder 30B", paramsB: 30, tags: ["code", "coder"] },
-  { pullName: "devstral:24b", title: "Devstral 24B", paramsB: 24, tags: ["code", "coder"] },
-] as const;
 const OLLAMA_LAYER_MEDIA_TYPES = new Set([
   "application/vnd.ollama.image.model",
   "application/vnd.ollama.image.adapter",
@@ -42,7 +34,11 @@ export type HubModel = {
   cardData?: { license?: string; model_name?: string; params?: string | number };
   siblings?: HubFile[];
 };
-export type OllamaManifest = { schemaVersion: number; layers: { mediaType: string; size: number }[] };
+/** The library presents a 12-character (or longer) manifest digest prefix. */
+export type OllamaTag = { family: string; name: string; textInput: boolean; digest: string };
+export type OllamaManifest = { schemaVersion: number; config: { mediaType: string; digest: string; size: number }; layers: { mediaType: string; size: number }[] };
+export type OllamaConfig = { modelFamily: string; paramsB: number; quantization: string };
+type HtmlNode = { nodeName?: string; tagName?: string; value?: string; attrs?: { name: string; value: string }[]; childNodes?: HtmlNode[]; parentNode?: HtmlNode };
 
 type FetchLike = typeof fetch;
 type UnknownRecord = Record<string, unknown>;
@@ -73,7 +69,11 @@ function asFiniteNumber(value: unknown): number | undefined {
 
 export function parseOllamaManifest(value: unknown): OllamaManifest {
   const manifest = asRecord(value);
-  if (!manifest || manifest.schemaVersion !== 2 || !Array.isArray(manifest.layers) || !manifest.layers.length) throw new Error("Ollama returned an invalid manifest");
+  const config = asRecord(manifest?.config);
+  const configMediaType = asString(config?.mediaType);
+  const configDigest = asString(config?.digest);
+  const configSize = config?.size;
+  if (!manifest || manifest.schemaVersion !== 2 || !configMediaType || !/^application\/vnd\.docker\.container\.image\.v1\+json$/.test(configMediaType) || !validDigest(configDigest) || !knownFileSize(configSize) || !Array.isArray(manifest.layers) || !manifest.layers.length) throw new Error("Ollama returned an invalid manifest");
   const layers = manifest.layers.map((value) => {
     const layer = asRecord(value);
     const mediaType = asString(layer?.mediaType);
@@ -83,7 +83,68 @@ export function parseOllamaManifest(value: unknown): OllamaManifest {
   });
   const totalSize = layers.reduce((total, layer) => total + layer.size, 0);
   if (!Number.isSafeInteger(totalSize) || !validSize(totalSize)) throw new Error("Ollama returned an implausible manifest size");
-  return { schemaVersion: 2, layers };
+  return { schemaVersion: 2, config: { mediaType: configMediaType, digest: configDigest, size: configSize }, layers };
+}
+
+const validDigest = (value: string | undefined): value is string => Boolean(value && /^sha256:[a-f0-9]{64}$/i.test(value));
+const validOllamaName = (value: string) => /^[a-z0-9][a-z0-9._-]*$/i.test(value);
+const qualityQuantization = /(?:^|[-_.:])(Q4_K_M|Q5_K_M|Q6_K|Q8_0|FP16)(?:$|[-_.:])/i;
+const defaultTag = (name: string) => /^(?:latest|default)$/i.test(name) || !/(?:^|[-_.:])(?:Q\d|IQ\d|FP(?:16|32)|BF16)(?:$|[-_.:])/i.test(name);
+
+function attributes(node: HtmlNode) { return new Map((node.attrs ?? []).map(({ name, value }) => [name.toLowerCase(), value])); }
+function nodeText(node: HtmlNode): string { return node.nodeName === "#text" ? (node.value ?? "") : (node.childNodes ?? []).map(nodeText).join(" "); }
+function walk(node: HtmlNode, visitor: (node: HtmlNode) => void) { visitor(node); for (const child of node.childNodes ?? []) walk(child, visitor); }
+function ancestorText(node: HtmlNode) { let current: HtmlNode | undefined = node; while (current && !["article", "li", "tr"].includes(current.tagName ?? "")) current = current.parentNode; return nodeText(current ?? node).replace(/\s+/g, " ").trim(); }
+
+/** Strictly extracts the current family links from the public Ollama library. */
+export function parseOllamaLibrary(html: string): string[] {
+  if (!html.trim()) throw new Error("Ollama library returned empty HTML");
+  const families = new Set<string>();
+  walk(parse(html) as HtmlNode, (node) => {
+    if (node.tagName !== "a") return;
+    const href = attributes(node).get("href");
+    const match = href?.match(/^\/library\/([a-z0-9][a-z0-9._-]*)\/?$/i);
+    if (match) families.add(match[1]);
+  });
+  if (!families.size) throw new Error("Ollama library markup contained no model families");
+  return [...families].sort((a, b) => a.localeCompare(b));
+}
+
+/** Extracts library tag rows, including the public text-input and digest markers. */
+export function parseOllamaTags(html: string, family: string): OllamaTag[] {
+  if (!validOllamaName(family) || !html.trim()) throw new Error("Ollama tags returned invalid HTML");
+  const tags = new Map<string, OllamaTag>();
+  walk(parse(html) as HtmlNode, (node) => {
+    if (node.tagName !== "a") return;
+    const href = attributes(node).get("href");
+    const match = href?.match(new RegExp(`^/library/${family.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:([a-z0-9][a-z0-9._-]*)/?$`, "i"));
+    if (!match) return;
+    const text = ancestorText(node);
+    const digest = text.match(/(?:sha256:)?([a-f0-9]{12,64})\b/i)?.[1]?.toLowerCase();
+    // The library exposes modality as an Input badge. Do not infer it from names.
+    const textInput = /\btext\b/i.test(text) && /\binput\b/i.test(text);
+    if (!digest) throw new Error("Ollama tags markup omitted a digest");
+    const name = match[1];
+    if (tags.has(name)) throw new Error("Ollama tags markup duplicated a tag");
+    tags.set(name, { family, name, textInput, digest });
+  });
+  if (!tags.size) throw new Error("Ollama tags markup contained no tags");
+  return [...tags.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function selectOllamaTags(tags: OllamaTag[]): OllamaTag[] {
+  return tags.filter((tag) => tag.textInput && (defaultTag(tag.name) || qualityQuantization.test(tag.name)));
+}
+
+export function parseOllamaConfig(value: unknown): OllamaConfig {
+  const config = asRecord(value);
+  const modelFamily = asString(config?.model_family);
+  // Public OCI config blobs use model_type and file_type (unlike local /api/tags).
+  const parameterSize = asString(config?.model_type);
+  const quantization = asString(config?.file_type);
+  const paramsB = params(parameterSize, "");
+  if (!modelFamily || !validOllamaName(modelFamily) || !paramsB || !Number.isFinite(paramsB) || !quantization || !/^[A-Z0-9_.-]+$/i.test(quantization)) throw new Error("Ollama returned invalid model metadata");
+  return { modelFamily, paramsB, quantization: quantization.toUpperCase() };
 }
 
 function normalizeHubFile(value: unknown): HubFile | undefined {
@@ -214,49 +275,67 @@ async function fetchJson(url: string, fetcher: FetchLike, refreshSignal: AbortSi
   return response.json();
 }
 
-function ollamaReference(pullName: string) {
-  const [model, tag] = pullName.split(":");
-  if (!model || !tag) throw new Error("Invalid curated Ollama model reference");
-  return { model, tag };
-}
+function ollamaLibraryUrl(pullName: string) { return `${OLLAMA_LIBRARY_BASE}/${pullName}`; }
 
-function ollamaLibraryUrl(pullName: string) {
-  return `${OLLAMA_LIBRARY_BASE}/${pullName}`;
-}
-
-export function ollamaArtifact(candidate: typeof ollamaCandidates[number], manifest: OllamaManifest): Artifact {
+export function ollamaArtifact(tag: OllamaTag, manifest: OllamaManifest, config: OllamaConfig): Artifact {
   const sizeBytes = manifest.layers.reduce((total, layer) => total + layer.size, 0);
+  const pullName = `${tag.family}:${tag.name}`;
   return {
-    id: `ollama/${candidate.pullName}`,
-    modelId: candidate.pullName,
-    title: candidate.title,
+    id: `ollama/${pullName}`,
+    modelId: pullName,
+    title: tag.family.replace(/[-_]/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()),
     format: "gguf",
     sizeBytes,
     sizeGb: Math.round((sizeBytes / 1e9) * 10) / 10,
-    paramsB: candidate.paramsB,
+    paramsB: config.paramsB,
+    quantization: config.quantization,
     downloads: 0,
     updatedAt: new Date().toISOString(),
     gated: false,
-    tags: [...candidate.tags],
+    // Family names are deliberately neutral except for the narrowly useful coder hint.
+    tags: /(?:^|[-_])(?:code|coder)(?:$|[-_])/i.test(tag.family) ? ["code", "coder"] : [],
     pipelineTag: "text-generation",
-    repositoryUrl: ollamaLibraryUrl(candidate.pullName),
-    sourceUrl: ollamaLibraryUrl(candidate.pullName),
-    pullName: candidate.pullName,
+    repositoryUrl: ollamaLibraryUrl(pullName),
+    sourceUrl: ollamaLibraryUrl(pullName),
+    pullName,
   };
 }
 
+async function fetchOllama(url: string, fetcher: FetchLike, refreshSignal: AbortSignal, accept?: string): Promise<Response> {
+  return fetcher(url, { signal: AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), refreshSignal]), headers: accept ? { Accept: accept } : undefined });
+}
+
 async function retrieveOllamaArtifacts(fetcher: FetchLike, refreshSignal: AbortSignal): Promise<Artifact[]> {
-  const entries = await mapWithConcurrency([...ollamaCandidates], DETAIL_CONCURRENCY, async (candidate) => {
-    const { model, tag } = ollamaReference(candidate.pullName);
-    const response = await fetcher(`${OLLAMA_REGISTRY_BASE}/${encodeURIComponent(model)}/manifests/${encodeURIComponent(tag)}`, {
-      signal: AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), refreshSignal]),
-      headers: { Accept: "application/vnd.docker.distribution.manifest.v2+json" },
-    });
+  const library = await fetchOllama(OLLAMA_LIBRARY_BASE, fetcher, refreshSignal);
+  if (!library.ok) throw new Error(`Ollama library request failed (${library.status})`);
+  const families = parseOllamaLibrary(await library.text());
+  const tagLists = await mapWithConcurrency(families, OLLAMA_CONCURRENCY, async (family) => {
+    const response = await fetchOllama(`${OLLAMA_LIBRARY_BASE}/${encodeURIComponent(family)}/tags`, fetcher, refreshSignal);
+    if (response.status === 404) return [];
+    if (!response.ok) throw new Error(`Ollama tags request failed (${response.status})`);
+    return selectOllamaTags(parseOllamaTags(await response.text(), family));
+  });
+  const selected = tagLists.flat();
+  if (!selected.length) throw new Error("Ollama library returned no usable text tags");
+  const entries = await mapWithConcurrency(selected, OLLAMA_CONCURRENCY, async (tag) => {
+    const response = await fetchOllama(`${OLLAMA_REGISTRY_BASE}/${encodeURIComponent(tag.family)}/manifests/${encodeURIComponent(tag.name)}`, fetcher, refreshSignal, "application/vnd.docker.distribution.manifest.v2+json");
     if (response.status === 404) return undefined;
     if (!response.ok) throw new Error(`Ollama registry request failed (${response.status})`);
-    return ollamaArtifact(candidate, parseOllamaManifest(await response.json()));
+    const manifestDigest = response.headers.get("docker-content-digest")?.toLowerCase();
+    if (!validDigest(manifestDigest) || !manifestDigest.startsWith(`sha256:${tag.digest}`)) throw new Error("Ollama registry manifest digest did not match the library");
+    const manifest = parseOllamaManifest(await response.json());
+    const configResponse = await fetchOllama(`${OLLAMA_REGISTRY_BASE}/${encodeURIComponent(tag.family)}/blobs/${encodeURIComponent(manifest.config.digest)}`, fetcher, refreshSignal, "application/vnd.docker.container.image.v1+json");
+    if (configResponse.status === 404) return undefined;
+    if (!configResponse.ok) throw new Error(`Ollama config request failed (${configResponse.status})`);
+    return { tag, manifest, config: parseOllamaConfig(await configResponse.json()), manifestDigest };
   });
-  return entries.filter((entry): entry is Artifact => entry !== undefined);
+  // Multiple library names can resolve to one manifest. Keep the first stable
+  // family/tag ordering from the parser, while preserving its direct library URL.
+  const unique = new Map<string, Exclude<(typeof entries)[number], undefined>>();
+  for (const entry of entries) if (entry && !unique.has(entry.manifestDigest)) unique.set(entry.manifestDigest, entry);
+  const artifacts = [...unique.values()].map(({ tag, manifest, config }) => ollamaArtifact(tag, manifest, config));
+  if (!artifacts.length) throw new Error("Ollama registry returned no usable artifacts");
+  return artifacts;
 }
 
 export async function mapWithConcurrency<T, R>(values: T[], limit: number, worker: (value: T) => Promise<R>): Promise<R[]> {
