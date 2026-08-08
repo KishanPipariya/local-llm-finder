@@ -1,4 +1,4 @@
-import { validateConfig } from "./recommendations";
+import { validateConfig } from "./hardware";
 
 export const catalogueUnavailableMessage = "The model catalogue is temporarily unavailable. Please try again shortly.";
 

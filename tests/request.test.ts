@@ -3,6 +3,7 @@ import test from "node:test";
 import { createPostHandler } from "../app/api/recommendations/route";
 import { parseFinderRequest } from "../lib/request";
 import { validateConfig, type MacConfig } from "../lib/recommendations";
+import { mergeExclusions } from "../lib/recommendation-service";
 
 const valid: MacConfig = { chip: "m4", memoryGb: 16, diskGb: 80, workload: "balanced" };
 
@@ -51,4 +52,10 @@ test("POST treats malformed JSON and non-object JSON as validation errors", asyn
     assert.equal(response.status, 400);
     assert.deepEqual(await response.json(), expected);
   }
+});
+
+test("service merges only known typed catalogue exclusion reasons", () => {
+  const ranking = { insufficientDisk: 1, insufficientMemory: 0, invalidSize: 0, unsupportedFormat: 2 };
+  assert.deepEqual(mergeExclusions(ranking, { insufficientMemory: 3, invalidSize: 1 }), { insufficientDisk: 1, insufficientMemory: 3, invalidSize: 1, unsupportedFormat: 2 });
+  assert.deepEqual(mergeExclusions(ranking, undefined), ranking);
 });

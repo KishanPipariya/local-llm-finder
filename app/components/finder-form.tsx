@@ -1,5 +1,5 @@
 import { HardwareSelector } from "@/app/components/hardware-selector";
-import { chipProfiles, type Chip, type ConfigFieldErrors } from "@/lib/recommendations";
+import { chipProfiles, type Chip, type ConfigFieldErrors } from "@/lib/hardware";
 
 type FormConfig = { chip?: string; memoryGb?: number; diskGb?: number; workload?: string; runtime?: string; context?: string };
 

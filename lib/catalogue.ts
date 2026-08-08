@@ -2,10 +2,10 @@ import { CatalogueCache, type Catalogue } from "./catalogue-cache";
 import type { Artifact, ExclusionSummary } from "./recommendations";
 import { unstable_cache } from "next/cache";
 import { parse } from "parse5";
+import { fetchJson, mapWithConcurrency, requestSignal, type FetchLike, REFRESH_TIMEOUT_MS } from "./catalogue-request";
 
 const MIN_ARTIFACT_BYTES = 100_000_000;
-const REQUEST_TIMEOUT_MS = 12_000;
-export const REFRESH_TIMEOUT_MS = 30_000;
+export { REFRESH_TIMEOUT_MS } from "./catalogue-request";
 const OLLAMA_CONCURRENCY = 6;
 const HUB_BASE = "https://huggingface.co/api/models";
 const OLLAMA_REGISTRY_BASE = "https://registry.ollama.ai/v2/library";
@@ -40,7 +40,6 @@ export type OllamaManifest = { schemaVersion: number; config: { mediaType: strin
 export type OllamaConfig = { modelFamily: string; paramsB: number; quantization: string };
 type HtmlNode = { nodeName?: string; tagName?: string; value?: string; attrs?: { name: string; value: string }[]; childNodes?: HtmlNode[]; parentNode?: HtmlNode };
 
-type FetchLike = typeof fetch;
 type UnknownRecord = Record<string, unknown>;
 
 const params = (value: unknown, text: string): number | undefined => {
@@ -269,12 +268,6 @@ export function normalizationExclusions(models: HubModel[], format: Artifact["fo
   }, {});
 }
 
-async function fetchJson(url: string, fetcher: FetchLike, refreshSignal: AbortSignal): Promise<unknown> {
-  const response = await fetcher(url, { signal: AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), refreshSignal]) });
-  if (!response.ok) throw new Error(`Hugging Face request failed (${response.status})`);
-  return response.json();
-}
-
 function ollamaLibraryUrl(pullName: string) { return `${OLLAMA_LIBRARY_BASE}/${pullName}`; }
 
 export function ollamaArtifact(tag: OllamaTag, manifest: OllamaManifest, config: OllamaConfig): Artifact {
@@ -302,7 +295,7 @@ export function ollamaArtifact(tag: OllamaTag, manifest: OllamaManifest, config:
 }
 
 async function fetchOllama(url: string, fetcher: FetchLike, refreshSignal: AbortSignal, accept?: string): Promise<Response> {
-  return fetcher(url, { signal: AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), refreshSignal]), headers: accept ? { Accept: accept } : undefined });
+  return fetcher(url, { signal: requestSignal(refreshSignal), headers: accept ? { Accept: accept } : undefined });
 }
 
 async function retrieveOllamaArtifacts(fetcher: FetchLike, refreshSignal: AbortSignal): Promise<Artifact[]> {
@@ -338,17 +331,7 @@ async function retrieveOllamaArtifacts(fetcher: FetchLike, refreshSignal: AbortS
   return artifacts;
 }
 
-export async function mapWithConcurrency<T, R>(values: T[], limit: number, worker: (value: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(values.length);
-  let next = 0;
-  await Promise.all(Array.from({ length: Math.min(limit, values.length) }, async () => {
-    while (next < values.length) {
-      const index = next++;
-      results[index] = await worker(values[index]);
-    }
-  }));
-  return results;
-}
+export { mapWithConcurrency } from "./catalogue-request";
 
 export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeoutMs = REFRESH_TIMEOUT_MS): Promise<Catalogue> {
   const refreshController = new AbortController();
@@ -356,8 +339,8 @@ export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeo
   try {
   const base = `${HUB_BASE}?full=true&limit=20&sort=downloads&direction=-1`;
   const [ggufList, mlxList, ollamaItems] = await Promise.all([
-    fetchJson(`${base}&search=GGUF`, fetcher, refreshController.signal).then(parseHubModelList),
-    fetchJson(`${base}&author=mlx-community`, fetcher, refreshController.signal).then(parseHubModelList),
+    fetchJson(`${base}&search=GGUF`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
+    fetchJson(`${base}&author=mlx-community`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
     retrieveOllamaArtifacts(fetcher, refreshController.signal),
   ]);
   // The full list responses include sibling metadata, so normalize their files

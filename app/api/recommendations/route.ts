@@ -1,18 +1,13 @@
 import { getRecommendations } from "@/lib/recommendation-service";
-import { validateConfig } from "@/lib/recommendations";
 import { catalogueUnavailableMessage } from "@/lib/request";
+import { handleRecommendationPost } from "@/lib/recommendation-request";
 
 export const runtime = "nodejs";
 
 export function createPostHandler(get = getRecommendations) {
   return async function POST(request: Request) {
-    const validation = validateConfig(await request.json().catch(() => null));
-    if (!validation.valid) return Response.json({ errors: validation.errors, fieldErrors: validation.fieldErrors }, { status: 400 });
-    try {
-      return Response.json(await get(validation.data));
-    } catch {
-      return Response.json({ error: catalogueUnavailableMessage }, { status: 503 });
-    }
+    const result = await handleRecommendationPost(request, get, catalogueUnavailableMessage);
+    return Response.json(result.body, { status: result.status });
   };
 }
 

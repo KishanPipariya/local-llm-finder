@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ChangeEvent } from "react";
-import { chipProfiles, chips, type Chip, type ConfigFieldErrors } from "@/lib/recommendations";
+import { chipProfiles, chips, type Chip, type ConfigFieldErrors } from "@/lib/hardware";
 
 const allMemoryOptions = [...new Set(chips.flatMap((chip) => chip.memoryOptionsGb))].sort((a, b) => a - b);
 

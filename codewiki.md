@@ -12,7 +12,7 @@ recommendations without requiring client-side JavaScript.
 
 ```text
 Browser GET /?chip=…&memoryGb=…&diskGb=…&workload=…&runtime=…&context=…
-  -> lib/request.ts takes the first value for repeated fields, coerces numeric query values, and validates the query
+  -> lib/request.ts takes the first value for repeated fields, coerces numeric query values, and delegates hardware validation to lib/hardware.ts
   -> lib/recommendation-service.ts obtains the catalogue and ranks artifacts
   -> server-rendered FinderForm and Results response, including typed fit explanations and exclusion counts
 
@@ -60,16 +60,24 @@ does not alter scoring, ranking, or API output.
 | `app/opengraph-image.tsx` | Code-generated 1200×630 branded social image route. |
 | `app/icon.tsx` | Code-generated branded application icon route. |
 | `next.config.ts` | Next configuration, including the TypeScript 6 compatibility API mode required while TypeScript 7 has no compiler API. |
-| `app/page.tsx` | Uses parsed GET query values, retrieves results, and renders page-level errors. |
+| `app/page.tsx` | Server-side route composition: parses GET query values, retrieves results, and passes them to presentation sections. |
+| `app/components/hero.tsx` | Static editorial hero and privacy promise. |
+| `app/components/preset-links.tsx` | Complete, shareable GET profile links. |
+| `app/components/site-footer.tsx` | Product constraints and runtime-format footer. |
 | `app/components/finder-form.tsx` | Accessible configuration form and field-level validation messages. |
 | `app/components/hardware-selector.tsx` | Client-side chip/memory filtering and accessible automatic-adjustment announcement. |
 | `app/components/results.tsx` | Results heading, plain-language catalogue status and scope disclosure, pace disclaimer, actionable exclusion disclosure, and visual Top pick designation for the first ranked item. |
+| `app/components/results-header.tsx` | Timestamp, stale-status, and shortlist heading presentation. |
 | `app/components/recommendation-card.tsx` | Recommendation fit explanation, metric hierarchy, source-aware Ollama/Hugging Face link, licence and gated-model notices, and initially collapsed installation and technical/ranking disclosures. |
+| `app/components/recommendation-metrics.tsx` | Reusable download, memory, pace, and setup-check card section. |
 | `app/api/recommendations/route.ts` | Node.js POST JSON endpoint; exposes `createPostHandler` for testing. |
 | `lib/request.ts` | Typed GET-query parsing and shared request-level catalogue-unavailable message. |
+| `lib/hardware.ts` | Typed Apple Silicon profiles and configuration validation used by request boundaries and interactive hardware controls. |
+| `lib/recommendation-request.ts` | Typed POST request boundary that maps shared validation and catalogue failures to the API contract. |
 | `lib/recommendations.ts` | Pure validation, memory and pace estimates, eligibility, scoring, ranking, and guidance. |
-| `lib/recommendation-service.ts` | Composition layer joining catalogue retrieval to ranking. |
-| `lib/catalogue.ts` | Server-side Hugging Face retrieval plus dynamic Ollama Library discovery, OCI manifest/config verification, normalized artifacts, and a 24-hour persistent Next.js refresh cache. |
+| `lib/recommendation-service.ts` | Composition layer joining catalogue retrieval to ranking and safely merging typed exclusion counts. |
+| `lib/catalogue.ts` | Stable retrieval facade: server-side Hugging Face retrieval plus dynamic Ollama discovery, normalization, and persistent cache composition. |
+| `lib/catalogue-request.ts` | Shared upstream timeout, JSON request, and bounded-concurrency helpers. |
 | `lib/catalogue-cache.ts` | Six-hour, process-local cache with request coalescing, stale fallback, and retry backoff. |
 | `tests/recommendations.test.ts` | Node tests for domain logic, ranking, cache behavior, and API statuses. |
 | `tests/request.test.ts` | Node tests for GET parsing and GET/POST validation parity. |
