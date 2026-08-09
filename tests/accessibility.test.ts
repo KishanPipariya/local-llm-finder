@@ -68,6 +68,16 @@ async function assertCardDisclosure(page: Page, name: string) {
   assert.equal(await disclosure.getAttribute("open"), null, `${name} closes by keyboard`);
 }
 
+async function assertPhoneLayout(page: Page, state: string) {
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, `${state} reflows without horizontal scrolling`);
+  const finder = await page.locator(".finder").boundingBox();
+  assert.ok(finder && finder.width <= (await page.evaluate(() => window.innerWidth)), `${state} finder fits the viewport`);
+  for (const selector of [".fields", ".context", ".cards"]) {
+    const grid = page.locator(selector).first();
+    if (await grid.count()) assert.equal(await grid.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(" ").length), 1, `${state} ${selector} uses one column`);
+  }
+}
+
 const server = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "--port", String(port)], { stdio: "ignore", env: { ...process.env, MAC_LLM_BROWSER_TEST_FIXTURE: "1" } });
 const browser = await chromium.launch();
 const context = await browser.newContext();
@@ -155,17 +165,39 @@ try {
   await assertNoAxeViolations(initial, "recommendation-card disclosures");
 
   const narrowContext = await browser.newContext({ viewport: { width: 320, height: 720 } });
+  const narrowInitial = await waitForPage(narrowContext);
+  await assertNoAxeViolations(narrowInitial, "320px initial finder");
+  await assertPhoneLayout(narrowInitial, "320px initial finder");
   const invalid = await narrowContext.newPage();
   await invalid.goto(`${origin}/?chip=m4Pro&memoryGb=16&diskGb=0&workload=nope`, { waitUntil: "networkidle" });
   await assertNoAxeViolations(invalid, "server-rendered invalid form");
   assert.equal(await invalid.locator(":focus").getAttribute("class"), "error-summary");
   assert.equal(await invalid.locator("#memoryGb").getAttribute("aria-invalid"), "true");
   assert.equal(await invalid.locator("#memoryGb").getAttribute("aria-describedby"), "memory-error");
-  assert.equal(await invalid.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "320px viewport reflows without horizontal scrolling");
+  await assertPhoneLayout(invalid, "320px invalid finder");
+
+  const narrowResults = await narrowContext.newPage();
+  await narrowResults.goto(`${origin}/?chip=m4&memoryGb=16&diskGb=12&workload=chat`, { waitUntil: "networkidle" });
+  await assertNoAxeViolations(narrowResults, "320px populated results");
+  await assertPhoneLayout(narrowResults, "320px populated results");
+  assert.equal(await narrowResults.locator(".cards").count(), 1, "320px populated results retain recommendation cards");
 
   const partial = await narrowContext.newPage();
   await partial.goto(`${origin}/?chip=m4`, { waitUntil: "networkidle" });
   assert.deepEqual(await partial.locator(".field-error").allTextContents(), ["Choose a memory configuration supported by that chip.", "Free disk space must be between 1 and 4,000 GB.", "Choose a workload."], "partial GET uses the same required fields as the API");
+
+  const phoneContext = await browser.newContext({ viewport: { width: 375, height: 812 } });
+  const phoneInitial = await waitForPage(phoneContext);
+  await assertNoAxeViolations(phoneInitial, "375px initial finder");
+  await assertPhoneLayout(phoneInitial, "375px initial finder");
+  const phoneInvalid = await phoneContext.newPage();
+  await phoneInvalid.goto(`${origin}/?chip=m4Pro&memoryGb=16&diskGb=0&workload=nope`, { waitUntil: "networkidle" });
+  await assertNoAxeViolations(phoneInvalid, "375px invalid finder");
+  await assertPhoneLayout(phoneInvalid, "375px invalid finder");
+  const phoneResults = await phoneContext.newPage();
+  await phoneResults.goto(`${origin}/?chip=m4&memoryGb=16&diskGb=12&workload=chat`, { waitUntil: "networkidle" });
+  await assertNoAxeViolations(phoneResults, "375px populated results");
+  await assertPhoneLayout(phoneResults, "375px populated results");
 
   const darkContext = await browser.newContext({ colorScheme: "dark" });
   const dark = await waitForPage(darkContext);
@@ -196,6 +228,7 @@ try {
   await assertCardDisclosure(noScript, "Installation guidance");
   await assertCardDisclosure(noScript, "Technical details and ranking factors");
   await noScriptContext.close();
+  await phoneContext.close();
   await narrowDarkContext.close();
   await darkContext.close();
   await narrowContext.close();

@@ -52,6 +52,11 @@ task. Results keep the complete ranked shortlist, but visually mark the first
 already-ranked card as the “Top pick”; this is a presentation label only and
 does not alter scoring, ranking, or API output.
 
+The responsive presentation preserves the desktop and tablet grids while
+reflowing phone widths from 320 CSS pixels upward. On phones, the finder and
+recommendation cards use one column, radio choices use full-width 44px targets,
+and long links and disclosure summaries wrap rather than overflow.
+
 ## Repository map
 
 | Path | Responsibility |
