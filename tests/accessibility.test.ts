@@ -77,6 +77,7 @@ try {
   await assertNoAxeViolations(initial, "initial finder");
   assert.equal(await initial.locator(".section-help").filter({ hasText: "We only show model files compatible with the selected runtime." }).count(), 1, "runtime helper explains selected-runtime compatibility");
   assert.deepEqual(await initial.locator('input[name="runtime"]').evaluateAll((inputs) => inputs.map((input) => input.getAttribute("value"))), ["llamaCpp", "mlx", "lmStudio", "ollama"], "runtime choices prioritize llama.cpp and MLX");
+  assert.deepEqual(await initial.locator('input[name="context"]').evaluateAll((inputs) => inputs.map((input) => input.parentElement?.textContent?.trim())), ["Small · 4K tokensShort chats", "Normal · 16K tokensTypical chat or coding", "Long · 32K tokensLarge documents or repositories"], "context choices specify their numeric token capacities");
   assert.equal(await initial.locator('link[rel="canonical"]').getAttribute("href"), "https://local-llm-finder-m7qb.vercel.app", "canonical URL uses the public site URL");
   assert.equal(await initial.locator('meta[property="og:url"]').getAttribute("content"), "https://local-llm-finder-m7qb.vercel.app", "Open Graph metadata uses the public site URL");
   assert.equal(await initial.locator('meta[name="twitter:card"]').getAttribute("content"), "summary_large_image", "Twitter uses a large image card");

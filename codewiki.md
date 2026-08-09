@@ -103,8 +103,9 @@ does not alter scoring, ranking, or API output.
 - `workload`: `chat`, `coding`, or `balanced`.
 - `runtime` (optional): `ollama`, `lmStudio`, `llamaCpp`, or `mlx`. When absent,
   ranking remains runtime-neutral for legacy API callers and URLs.
-- `context` (optional): `small`, `normal`, or `long`. When absent it uses the
-  established conservative Normal estimate.
+- `context` (optional): `small` (4K tokens), `normal` (16K tokens), or `long`
+  (32K tokens). When absent it uses the established conservative Normal
+  estimate.
 
 It returns both an ordered error list and typed field errors. Both GET and POST
 must use this function so they reject the same impossible Mac configurations,
@@ -130,10 +131,10 @@ artifacts.
   It supports MLX.
 - Disk fit is strict: the exact byte size must be no greater than free disk.
 - Memory estimate adds conservative file-mapping, runtime, and context overhead.
-  Small is for short chats, Normal is the default for typical chat/coding, and
-  Long reserves more headroom for large documents or repositories. A selected
-  runtime filters results to directly usable formats and gives each card one
-  exact-file setup command.
+  Small (4K tokens) is for short chats, Normal (16K tokens) is the default for
+  typical chat/coding, and Long (32K tokens) reserves more headroom for large
+  documents or repositories. A selected runtime filters results to directly
+  usable formats and gives each card one exact-file setup command.
   A model is omitted when the estimate exceeds unified memory.
 - Gated models remain eligible, but carry a sign-in and licence-acceptance note.
 - When Hugging Face supplies a repository revision, exact GGUF file links and
