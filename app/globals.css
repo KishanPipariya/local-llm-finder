@@ -17,8 +17,8 @@ main { max-width: 1320px; margin: auto; padding: 0 32px; }
 .pill, .eyebrow { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; font-weight: 800; }
 .pill { border: 1px solid var(--line-dark); padding: 9px 12px; color: var(--ink); background: var(--paper-translucent); }
 .hero-copy { position: relative; z-index: 1; margin-top: 82px; max-width: 770px; animation: fade-in .65s ease-out both; }
-.hero h1 { max-width: 820px; margin: 14px 0 21px; font-size: clamp(52px, 7.7vw, 104px); letter-spacing: -.085em; line-height: .89; }
-.hero em { font-family: var(--serif); font-weight: 400; letter-spacing: -.075em; }
+.hero h1 { max-width: 820px; margin: 14px 0 21px; font-size: clamp(52px, 7.7vw, 104px); letter-spacing: -.045em; line-height: .92; }
+.hero em { font-family: var(--serif); font-weight: 400; letter-spacing: -.04em; }
 .hero p { max-width: 500px; margin: 0; color: var(--ink-soft); font-size: 18px; line-height: 1.55; }
 .privacy-promise { display: flex; flex-wrap: wrap; gap: 7px 16px; padding: 0; margin: 19px 0 0; color: var(--ink); font-size: 12px; font-weight: 800; list-style: none; }.privacy-promise li { display: inline-flex; align-items: center; gap: 7px; }.privacy-promise li::before { content: ""; width: 7px; height: 7px; background: var(--blue); }
 .signal-panel { position: absolute; right: 3%; top: 113px; width: min(31vw, 385px); aspect-ratio: 1.06; color: var(--blue); border: 1px solid var(--line-dark); background: linear-gradient(135deg, var(--panel-start), var(--panel-end)); box-shadow: 10px 10px 0 var(--ink); overflow: hidden; animation: fade-in .8s .08s ease-out both; }
