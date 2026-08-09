@@ -216,12 +216,14 @@ npm run verify
 ```
 
 `npm install` runs the `prepare` script, which configures Git to use the
-version-controlled Husky hooks in `.husky/`. `pre-commit` runs `npm run lint`.
-`pre-push` runs `npm run verify`, which runs linting, tests, and a production
-build. The individual commands remain available, and Git's standard
-`--no-verify` option can bypass a hook when explicitly needed. There is no
-GitHub Actions verification workflow; local hooks are the project's verification
-gate.
+version-controlled Husky hooks in `.husky/`. Both hooks explicitly use
+`mise exec node@24` so they do not inherit an incompatible shell Node version.
+`pre-commit` runs linting. `pre-push` runs `npm run verify:prepush` (lint,
+unit tests, and a production build); the longer Playwright/axe suite remains in
+`npm test` and the full `npm run verify` release check. The individual commands
+remain available, and Git's standard `--no-verify` option can bypass a hook
+when explicitly needed. There is no GitHub Actions verification workflow; local
+hooks are the project's verification gate.
 
 `npm test` includes
 both the Node test suite and the Playwright/axe accessibility suite; the latter
@@ -235,9 +237,9 @@ for the production server.
 `npm run test:unit` uses Node's built-in experimental test coverage report for
 the exercised server and domain modules. It enforces the current baseline of
 98.28% lines, 90.10% branches, and 95.74% functions; a regression below any
-threshold fails the command. Consequently, `npm test` and `npm run verify`
-print and enforce this coverage report before running the separate
-accessibility suite. Browser-rendered pages and components are outside this
+threshold fails the command. Consequently, `npm run test:unit`,
+`npm run verify:prepush`, `npm test`, and `npm run verify` print and enforce
+this coverage report. Browser-rendered pages and components are outside this
 unit-coverage scope.
 
 Use Node 24.x (`.nvmrc` is provided). The toolchain uses ESLint 10.8.0,
