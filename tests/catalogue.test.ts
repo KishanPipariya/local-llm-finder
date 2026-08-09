@@ -11,20 +11,24 @@ test("normalization discards malformed optional Hugging Face metadata", () => {
   assert.deepEqual(normalizeModels([model], "gguf").map((artifact) => artifact.sizeBytes), [4_000_000_000]);
 });
 
-function upstream() {
+function upstream(options: { unavailableModel?: string } = {}) {
   return async (url: string) => {
     if (url.includes("?full=true")) return Response.json(url.includes("author=mlx-community") ? [listedMlxModel] : [listedModel]);
+    if (url.includes("?blobs=true")) {
+      if (options.unavailableModel && url.includes(options.unavailableModel)) return new Response(null, { status: 503 });
+      return Response.json(url.includes("mlx-community") ? listedMlxModel : listedModel);
+    }
     throw new Error(`Unexpected upstream request: ${url}`);
   };
 }
 
-test("catalogue refresh uses only the two Hugging Face list responses", async () => {
+test("catalogue refresh fetches blob metadata for every listed repository", async () => {
   const catalogue = await retrieveCatalogue(upstream() as typeof fetch);
   assert.deepEqual(catalogue.items.map((item) => item.format).sort(), ["gguf", "mlx"]);
   assert.equal(catalogue.items.some((item) => item.pullName), false);
 });
 
-test("catalogue refresh uses list metadata without Hugging Face detail requests and rejects failed lists", async () => {
+test("catalogue refresh uses blob metadata, tolerates an unavailable repository, and rejects failed lists", async () => {
   const urls: string[] = [];
   const listOnly = async (url: string, init?: RequestInit) => {
     urls.push(url);
@@ -32,7 +36,9 @@ test("catalogue refresh uses list metadata without Hugging Face detail requests 
   };
   const catalogue = await retrieveCatalogue(listOnly as typeof fetch);
   assert.deepEqual(catalogue.items.filter((item) => !item.pullName).map((item) => item.sizeBytes).sort((a, b) => a - b), [4_000_000_000, 4_000_002_000]);
-  assert.equal(urls.some((url) => url.startsWith("https://huggingface.co/api/models/") && !url.includes("?full=true")), false);
+  assert.equal(urls.filter((url) => url.includes("?blobs=true")).length, 2);
+  const partial = await retrieveCatalogue(upstream({ unavailableModel: "org/Model-GGUF" }) as typeof fetch);
+  assert.deepEqual(partial.items.map((item) => item.format), ["mlx"]);
   await assert.rejects(retrieveCatalogue((async () => new Response(null, { status: 503 })) as typeof fetch));
 });
 

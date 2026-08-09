@@ -1,7 +1,7 @@
 import { CatalogueCache, type Catalogue } from "./catalogue-cache";
 import type { Artifact, ExclusionSummary } from "./recommendations";
 import { unstable_cache } from "next/cache";
-import { fetchJson, type FetchLike, REFRESH_TIMEOUT_MS } from "./catalogue-request";
+import { fetchJson, mapWithConcurrency, type FetchLike, REFRESH_TIMEOUT_MS } from "./catalogue-request";
 
 const MIN_ARTIFACT_BYTES = 100_000_000;
 export { REFRESH_TIMEOUT_MS } from "./catalogue-request";
@@ -32,6 +32,7 @@ const isMlxRuntimeFile = (filename: string) => /(?:^|\/)(?:[^/]+\.safetensors|[^
 const repoUrl = (id: string) => `https://huggingface.co/${id}`;
 const revisionUrl = (id: string, revision?: string) => revision ? `${repoUrl(id)}/tree/${encodeURIComponent(revision)}` : repoUrl(id);
 const fileUrl = (id: string, filename: string, revision?: string) => `${repoUrl(id)}/resolve/${encodeURIComponent(revision ?? "main")}/${filename.split("/").map(encodeURIComponent).join("/")}`;
+const modelInfoUrl = (id: string) => `${HUB_BASE}/${id.split("/").map(encodeURIComponent).join("/")}?blobs=true`;
 
 function asRecord(value: unknown): UnknownRecord | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as UnknownRecord : undefined;
@@ -169,6 +170,17 @@ export function normalizationExclusions(models: HubModel[], format: Artifact["fo
 
 export { mapWithConcurrency } from "./catalogue-request";
 
+async function retrieveModelMetadata(model: HubModel, fetcher: FetchLike, refreshSignal: AbortSignal): Promise<HubModel | undefined> {
+  try {
+    return normalizeHubModel(await fetchJson(modelInfoUrl(model.id), fetcher, refreshSignal, "Hugging Face"));
+  } catch {
+    // A repository can disappear or be temporarily unavailable between the
+    // list and detail requests. Excluding that one unverified artifact keeps
+    // the remaining, size-verified catalogue usable.
+    return undefined;
+  }
+}
+
 export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeoutMs = REFRESH_TIMEOUT_MS): Promise<Catalogue> {
   const refreshController = new AbortController();
   const deadline = setTimeout(() => refreshController.abort(new Error("Hugging Face catalogue refresh timed out")), refreshTimeoutMs);
@@ -178,12 +190,19 @@ export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeo
     fetchJson(`${base}&search=GGUF`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
     fetchJson(`${base}&author=mlx-community`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
   ]);
-  // The full list responses include sibling metadata, so normalize their files
-  // directly instead of adding one detail request per repository.
-  const items = [...normalizeModels(ggufList, "gguf"), ...normalizeModels(mlxList, "mlx")];
+  // List responses contain filenames but no byte sizes. Fetch each selected
+  // repository's blob metadata before normalizing, otherwise conservative size
+  // validation would exclude every artifact.
+  const [ggufModels, mlxModels] = await Promise.all([
+    mapWithConcurrency(ggufList, 6, (model) => retrieveModelMetadata(model, fetcher, refreshController.signal)),
+    mapWithConcurrency(mlxList, 6, (model) => retrieveModelMetadata(model, fetcher, refreshController.signal)),
+  ]);
+  const verifiedGgufModels = ggufModels.filter((model): model is HubModel => model !== undefined);
+  const verifiedMlxModels = mlxModels.filter((model): model is HubModel => model !== undefined);
+  const items = [...normalizeModels(verifiedGgufModels, "gguf"), ...normalizeModels(verifiedMlxModels, "mlx")];
   if (!items.length) throw new Error("Hugging Face catalogue returned no usable artifacts");
-  const ggufExclusions = normalizationExclusions(ggufList, "gguf");
-  const mlxExclusions = normalizationExclusions(mlxList, "mlx");
+  const ggufExclusions = normalizationExclusions(verifiedGgufModels, "gguf");
+  const mlxExclusions = normalizationExclusions(verifiedMlxModels, "mlx");
   return { items, refreshedAt: new Date().toISOString(), exclusions: { invalidSize: (ggufExclusions.invalidSize ?? 0) + (mlxExclusions.invalidSize ?? 0), unsupportedFormat: (ggufExclusions.unsupportedFormat ?? 0) + (mlxExclusions.unsupportedFormat ?? 0) } };
   } finally {
     clearTimeout(deadline);

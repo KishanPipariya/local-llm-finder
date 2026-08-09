@@ -176,10 +176,12 @@ two add operational notes.
 
 `retrieveCatalogue` makes two server-side Hugging Face `full=true` list
 requests: popular GGUF repositories and repositories from `mlx-community`.
-The list metadata is normalized directly, so there are no per-repository detail
-requests or non-Hugging-Face catalogue calls. Each request has a 12-second
-timeout, while a complete refresh has a 30-second deadline that aborts all
-outstanding work. An empty usable catalogue fails the full refresh.
+Because those list responses contain filenames but not reliable byte sizes, it
+then obtains each selected repository's `blobs=true` metadata with a bounded
+concurrency of six. A repository that disappears or fails during that second
+step is excluded; its unverified files are never recommended. Each request has
+a 12-second timeout, while a complete refresh has a 30-second deadline that
+aborts all outstanding work. An empty usable catalogue fails the full refresh.
 
 Next.js `unstable_cache` wraps the complete production refresh under a stable
 key with a 24-hour revalidation interval, sharing the full upstream crawl across
