@@ -4,7 +4,7 @@
 
 Mac Local LLM Finder is a privacy-first Next.js application that recommends
 current local chat and coding models that fit a chosen Apple Silicon Mac. It
-uses dynamically discovered, registry-verified public Ollama pulls and public Hugging Face data,
+uses a server-side public Hugging Face catalogue,
 keeps submitted hardware details only within the request, and renders
 recommendations without requiring client-side JavaScript.
 
@@ -76,7 +76,7 @@ does not alter scoring, ranking, or API output.
 | `lib/recommendation-request.ts` | Typed POST request boundary that maps shared validation and catalogue failures to the API contract. |
 | `lib/recommendations.ts` | Pure validation, memory and pace estimates, eligibility, scoring, ranking, and guidance. |
 | `lib/recommendation-service.ts` | Composition layer joining catalogue retrieval to ranking and safely merging typed exclusion counts. |
-| `lib/catalogue.ts` | Stable retrieval facade: server-side Hugging Face retrieval plus dynamic Ollama discovery, normalization, and persistent cache composition. |
+| `lib/catalogue.ts` | Stable retrieval facade: server-side Hugging Face retrieval, normalization, and persistent cache composition. |
 | `lib/catalogue-request.ts` | Shared upstream timeout, JSON request, and bounded-concurrency helpers. |
 | `lib/catalogue-cache.ts` | Six-hour, process-local cache with request coalescing, stale fallback, and retry backoff. |
 | `tests/recommendations.test.ts` | Node tests for domain logic, ranking, cache behavior, and API statuses. |
@@ -119,21 +119,6 @@ omitted, and malformed files are discarded before `Artifact` values are
 created. Normalization excludes unknown, non-integer, and smaller-than-100 MB
 artifacts.
 
-- Native Ollama: every refresh discovers all family slugs linked by
-  `ollama.com/library`, then parses each family’s tags page. Only tags marked
-  with text input and either a default/unquantized name or `Q4_K_M`, `Q5_K_M`,
-  `Q6_K`, `Q8_0`, or `FP16` are considered. Each selected tag’s displayed
-  digest must match the OCI manifest response. Its manifest and required config
-  blob are strictly validated; complete layer bytes provide disk and memory
-  inputs, while parameter count and quantization come from its `model_type` and
-  `file_type` config metadata.
-  Names add only cautious `code`/`coder` hints. Aliases that resolve to one
-  manifest are deduplicated with one stable canonical pull and direct library
-  URL. A `404` removes only that retired page or tag; malformed markup/metadata,
-  no usable discovery result, or any other upstream failure rejects the atomic
-  refresh. Native entries carry a `pullName`, support only Ollama, link to
-  Ollama, and use exactly
-  `ollama pull <pullName> && ollama run <pullName>`.
 - GGUF: retain every valid Hugging Face `.gguf` file as a separate quantization
   variant (Q2–Q8, IQ variants, and F16/BF16/F32 labels when present). It supports
   Ollama, LM Studio, and llama.cpp. Its Ollama guidance remains the explicit
@@ -191,14 +176,10 @@ two add operational notes.
 
 `retrieveCatalogue` makes two server-side Hugging Face `full=true` list
 requests: popular GGUF repositories and repositories from `mlx-community`.
-The list metadata is normalized directly, so there are no per-repository
-Hugging Face detail requests. In parallel it loads the public Ollama library
-page, family tag pages, selected OCI manifests, and their config blobs with
-bounded concurrency (six Ollama requests at once). Each request has a 12-second
+The list metadata is normalized directly, so there are no per-repository detail
+requests or non-Hugging-Face catalogue calls. Each request has a 12-second
 timeout, while a complete refresh has a 30-second deadline that aborts all
-outstanding work. Discovery is atomic, so an Ollama parsing, metadata, or
-non-404 upstream failure rejects the refresh. An empty usable mixed catalogue
-fails the full refresh.
+outstanding work. An empty usable catalogue fails the full refresh.
 
 Next.js `unstable_cache` wraps the complete production refresh under a stable
 key with a 24-hour revalidation interval, sharing the full upstream crawl across

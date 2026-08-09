@@ -23,8 +23,8 @@ You can also explore local-model tools and catalogues directly:
 
 - Complete, shareable GET links and a server-rendered form that work without JavaScript.
 - Validated Apple Silicon chip and unified-memory combinations.
-- Verified native Ollama pulls for Ollama, plus Hugging Face GGUF recommendations for LM Studio and llama.cpp and MLX recommendations for MLX.
-- A server-side mixed Ollama-registry/Hugging-Face catalogue with a shared daily refresh cache, six-hour local cache, and stale fallback.
+- Hugging Face GGUF recommendations for Ollama, LM Studio, and llama.cpp, plus MLX recommendations for MLX.
+- A server-side Hugging Face catalogue with a shared daily refresh cache, six-hour local cache, and stale fallback.
 
 ## Request and data flow
 
@@ -51,10 +51,8 @@ POST /api/recommendations ┘                                      └───�
 
 A successful response returns the existing recommendation result object, including `recommendations`, `exclusions`, and `stale`. Invalid configurations return `400` with `errors` and `fieldErrors`; a catalogue outage with no cached result returns `503` with `error`.
 
-Native Ollama recommendations include `pullName` and always provide the exact
-command `ollama pull <pullName> && ollama run <pullName>`. Hugging Face GGUF
-files keep their import-based Ollama guidance; the finder never emits `ollama
-pull` for an arbitrary Hugging Face file.
+Hugging Face GGUF files use import-based Ollama guidance; the finder never
+emits `ollama pull` for an arbitrary Hugging Face file.
 
 ## Catalogue refresh and fallback
 
@@ -67,9 +65,7 @@ GET flow shows its temporary error and the API returns `503`.
 
 Each shared refresh uses two Hugging Face `full=true` list responses (popular
 GGUF repositories and `mlx-community`) and normalizes their file metadata
-directly—there are no per-repository Hugging Face detail requests. The same
-daily refresh performs the complete Ollama Library discovery and registry
-verification crawl.
+directly—there are no per-repository or non-Hugging-Face catalogue requests.
 
 ## Run locally
 
