@@ -85,9 +85,16 @@ const context = await browser.newContext();
 try {
   const initial = await waitForPage(context);
   await assertNoAxeViolations(initial, "initial finder");
-  assert.equal(await initial.locator(".section-help").filter({ hasText: "We only show model files compatible with the selected runtime." }).count(), 1, "runtime helper explains selected-runtime compatibility");
-  assert.deepEqual(await initial.locator('input[name="runtime"]').evaluateAll((inputs) => inputs.map((input) => input.getAttribute("value"))), ["llamaCpp", "mlx", "lmStudio", "ollama"], "runtime choices prioritize llama.cpp and MLX");
-  assert.deepEqual(await initial.locator('input[name="context"]').evaluateAll((inputs) => inputs.map((input) => input.parentElement?.textContent?.trim())), ["Small · 4K tokensShort chats", "Normal · 16K tokensTypical chat or coding", "Long · 32K tokensLarge documents or repositories"], "context choices specify their numeric token capacities");
+  assert.equal(await initial.getByText("Ollama is the simplest starting point", { exact: false }).count(), 1, "runtime helper gives beginners a recommended starting point");
+  assert.deepEqual(await initial.locator('input[name="runtime"]').evaluateAll((inputs) => inputs.map((input) => input.getAttribute("value"))), ["ollama", "lmStudio", "mlx", "llamaCpp"], "runtime choices put the beginner recommendation first");
+  assert.deepEqual(await initial.locator('input[name="context"]').evaluateAll((inputs) => inputs.map((input) => input.parentElement?.textContent?.trim())), ["Short · 4KA few messages or a small file", "Normal · 16KTypical chat or coding · recommended", "Long · 32KLarge documents or repositories"], "context choices explain conversation size in plain language");
+  const specsHelper = initial.locator(".specs-helper");
+  const specsSummary = specsHelper.locator("summary");
+  const specsBox = await specsSummary.boundingBox();
+  assert.ok(specsBox && specsBox.width >= 44 && specsBox.height >= 44, "Mac-spec helper has a usable native disclosure control");
+  await specsSummary.click();
+  assert.notEqual(await specsHelper.getAttribute("open"), null, "Mac-spec helper opens without client-side JavaScript");
+  await specsSummary.click();
   assert.equal(await initial.locator('link[rel="canonical"]').getAttribute("href"), "https://local-llm-finder-m7qb.vercel.app", "canonical URL uses the public site URL");
   assert.equal(await initial.locator('meta[property="og:url"]').getAttribute("content"), "https://local-llm-finder-m7qb.vercel.app", "Open Graph metadata uses the public site URL");
   assert.equal(await initial.locator('meta[name="twitter:card"]').getAttribute("content"), "summary_large_image", "Twitter uses a large image card");
@@ -110,7 +117,7 @@ try {
     await preset.focus().catch(() => undefined);
   }
   await initial.goto(origin, { waitUntil: "networkidle" });
-  const firstPreset = initial.getByRole("link", { name: /Everyday/ });
+  const firstPreset = initial.getByRole("link", { name: /Everyday chat/ });
   await firstPreset.focus();
   assert.equal(await initial.locator(":focus").evaluate((element) => element.tagName), "A", "preset retains keyboard-accessible link semantics");
   await initial.goto(origin, { waitUntil: "networkidle" });
@@ -154,8 +161,13 @@ try {
   assert.equal(await initial.locator("#memoryGb").inputValue(), "48", "shared memory remains selected");
 
   await initial.goto(`${origin}/?chip=m4&memoryGb=16&diskGb=12&workload=chat`, { waitUntil: "networkidle" });
+  assert.equal(await initial.locator(".setup-summary").count(), 1, "results include a compact setup summary");
+  assert.match(await initial.locator(".setup-summary").textContent() ?? "", /M4[\s\S]*16 GB unified memory[\s\S]*12 GB free disk/, "setup summary retains the submitted Mac details");
+  assert.equal(await initial.getByRole("link", { name: "Edit profile →" }).getAttribute("href"), "/?chip=m4&memoryGb=16&diskGb=12&workload=chat&runtime=ollama&context=normal#finder", "edit profile preserves the full configuration in its GET URL");
   assert.equal(await initial.locator(".card.top-pick").count(), 1, "the first ranked result is visually marked as the top pick");
   assert.equal(await initial.locator(".card").first().locator(".top-pick-label").textContent(), "Top pick");
+  assert.equal(await initial.getByRole("link", { name: "Install with Ollama: open llama3.2:3b on Ollama in a new tab" }).count(), 1, "top recommendation has a clearly labelled primary install action");
+  assert.equal(await initial.getByText("How these results work", { exact: true }).count(), 1, "catalogue caveats are available in a collapsed disclosure");
   assert.equal(await initial.getByRole("link", { name: "View llama3.2:3b on Ollama (opens in a new tab)" }).count(), 1, "native Ollama entries identify their registry source");
   await assertUnchangedBox(initial, ".card", () => initial.locator(".card").first().hover(), "hovering a recommendation card");
   await assertCardDisclosure(initial, "Installation guidance");
@@ -163,6 +175,10 @@ try {
   assert.equal(await initial.locator(".card").first().locator(".guide code").textContent(), "ollama pull llama3.2:3b && ollama run llama3.2:3b", "server-rendered native installation guidance uses the verified pull target");
   await assertCardDisclosure(initial, "Technical details and ranking factors");
   await assertNoAxeViolations(initial, "recommendation-card disclosures");
+
+  await initial.goto(`${origin}/?chip=m4&memoryGb=16&diskGb=1&workload=chat`, { waitUntil: "networkidle" });
+  assert.equal(await initial.locator(".no-results").count(), 1, "no-result profiles include a recovery panel");
+  assert.equal(await initial.getByRole("link", { name: "Edit this profile to try again →" }).count(), 1, "no-result recovery keeps a no-JavaScript edit path");
 
   const narrowContext = await browser.newContext({ viewport: { width: 320, height: 720 } });
   const narrowInitial = await waitForPage(narrowContext);

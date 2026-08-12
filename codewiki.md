@@ -25,9 +25,12 @@ Browser POST /api/recommendations (same configuration JSON)
 `app/page.tsx` is intentionally a server component. Its query parameters make
 the page request-time rendered. The form in `FinderForm` uses `method="get"`,
 so the ordinary page flow remains functional when JavaScript is disabled.
-The page also offers three ordinary GET preset links (Everyday, Developer, and
-High-capacity). Each link includes a complete valid configuration, so it is
-shareable and lands directly on server-rendered results without JavaScript.
+The page also offers three ordinary GET presets organized around first-time goals
+(Everyday chat, Help with coding, and Large code and documents). Each states its
+Mac, free-storage, and runtime assumptions and includes a complete valid
+configuration, so it is shareable and lands directly on server-rendered results
+without JavaScript. The form includes a native “Find your Mac specs” disclosure
+that explains chip, unified memory, and free disk space in plain language.
 `HardwareSelector` is a small progressive-enhancement client component. Its
 initial server-rendered and hydrated states retain the complete memory list, so
 the selector does not shift at load time and no-JavaScript users keep the same
@@ -45,12 +48,20 @@ have visible expand/collapse indicators and remain fully operable by mouse and
 keyboard without client-side JavaScript.
 
 The server-rendered finder presentation groups configuration controls into
-Hardware, Use and context, and Runtime sections. The Runtime choices present
-llama.cpp and MLX before LM Studio and Ollama. The hero repeats the
-no-account, no-tracking, and no-saved-configuration promise beside the primary
-task. Results keep the complete ranked shortlist, but visually mark the first
-already-ranked card as the “Top pick”; this is a presentation label only and
-does not alter scoring, ranking, or API output.
+Hardware, outcome/context, and Runtime sections. Context is described as how
+much text or code belongs in one conversation; Balanced, Normal context, and
+Ollama are explicitly marked as sensible first-time defaults. The hero repeats
+the no-account, no-tracking, and no-saved-configuration promise beside the
+primary task. Results begin with a compact submitted-setup summary and an Edit
+profile GET link that preserves the complete configuration. They visually mark
+the first already-ranked card as the “Top pick”, explain its fit,
+download/storage, qualitative pace, and offer a primary runtime-specific
+installation link. Remaining cards are grouped as alternatives with a one-line choice cue.
+This presentation does not alter scoring, ranking, or API output. Catalogue
+scope and performance caveats are kept in a native “How these results work”
+disclosure while freshness remains visible. An empty shortlist renders an
+actionable recovery panel with an Edit profile link, rather than only listing
+exclusions.
 
 The responsive presentation preserves the desktop and tablet grids while
 reflowing phone widths from 320 CSS pixels upward. On phones, the finder and
@@ -71,7 +82,7 @@ and long links and disclosure summaries wrap rather than overflow.
 | `app/components/site-footer.tsx` | Product constraints and runtime-format footer. |
 | `app/components/finder-form.tsx` | Accessible configuration form and field-level validation messages. |
 | `app/components/hardware-selector.tsx` | Client-side chip/memory filtering and accessible automatic-adjustment announcement. |
-| `app/components/results.tsx` | Results heading, plain-language catalogue status and scope disclosure, pace disclaimer, actionable exclusion disclosure, and visual Top pick designation for the first ranked item. |
+| `app/components/results.tsx` | Results heading, submitted setup summary/edit link, top-pick and alternatives grouping, no-results recovery, catalogue disclosure, and actionable exclusion disclosure. |
 | `app/components/results-header.tsx` | Timestamp, stale-status, and shortlist heading presentation. |
 | `app/components/recommendation-card.tsx` | Recommendation fit explanation, metric hierarchy, source-aware Ollama/Hugging Face link, licence and gated-model notices, and initially collapsed installation and technical/ranking disclosures. |
 | `app/components/recommendation-metrics.tsx` | Reusable download, memory, pace, and setup-check card section. |

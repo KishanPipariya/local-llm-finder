@@ -13,6 +13,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Fin
   const params = await searchParams;
   const { submitted, candidate, validation: submittedValidation } = parseFinderRequest(params);
   const validation = submittedValidation ?? { valid: true as const, data: initial };
+  const selectedConfig = validation.valid ? validation.data : undefined;
   let result;
   let catalogueError = "";
   if (submitted && validation.valid) {
@@ -24,7 +25,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Fin
     <Hero />
     <PresetLinks />
     <FinderForm config={validation.valid ? validation.data : candidate} submitted={submitted} errors={validation.valid ? [] : validation.errors} fieldErrors={validation.valid ? {} : validation.fieldErrors} catalogueError={catalogueError} />
-    {result && <Results result={result} />}
+    {result && selectedConfig && <Results result={result} config={selectedConfig} />}
     <SiteFooter />
   </main>;
 }
