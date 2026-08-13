@@ -4,7 +4,7 @@
 
 ![Fixture-backed recommended results](docs/images/recommended-results.png)
 
-Your Mac configuration is used only for that request; it is not saved. The finder gives conservative compatibility, storage, and qualitative pace estimates rather than performance benchmarks.
+Your Mac configuration is used only for that request; it is not saved. The finder gives conservative, best-effort compatibility and storage estimates—not guarantees that a download, import, or run will succeed—and qualitative pace estimates rather than performance benchmarks.
 
 ## Alternatives
 
@@ -24,7 +24,7 @@ You can also explore local-model tools and catalogues directly:
 - Complete, shareable GET links and a server-rendered form that work without JavaScript.
 - Validated Apple Silicon chip and unified-memory combinations.
 - Hugging Face GGUF recommendations for Ollama, LM Studio, and llama.cpp, plus MLX recommendations for MLX.
-- A server-side Hugging Face catalogue with a shared daily refresh cache, six-hour local cache, and stale fallback.
+- A server-side Hugging Face catalogue with a shared six-hour refresh cache, six-hour local cache, and stale fallback.
 
 ## Request and data flow
 
@@ -52,7 +52,9 @@ POST /api/recommendations ┘                                      └───�
 A successful response returns the existing recommendation result object, including `recommendations`, `exclusions`, and `stale`. Invalid configurations return `400` with `errors` and `fieldErrors`; a catalogue outage with no cached result returns `503` with `error`.
 
 Hugging Face GGUF files use import-based Ollama guidance; the finder never
-emits `ollama pull` for an arbitrary Hugging Face file.
+emits `ollama pull` for an arbitrary Hugging Face file. Gated artifacts keep
+their licence warning and use `hf auth login` plus an exact-revision download
+before the runtime-specific import command.
 
 ## Catalogue refresh and fallback
 
@@ -67,7 +69,9 @@ and the API returns `503`.
 Each shared refresh uses two Hugging Face `full=true` list responses (popular
 GGUF repositories and `mlx-community`), then requests each selected
 repository's `blobs=true` metadata before normalizing it. There are no
-non-Hugging-Face catalogue requests.
+non-Hugging-Face catalogue requests. MLX sizes represent the complete snapshot
+download and are rejected when any repository file has an unknown size; imports
+may also need temporary free disk space beyond the displayed download size.
 
 ## Run locally
 

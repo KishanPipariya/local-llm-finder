@@ -146,22 +146,31 @@ artifacts.
   exact verified GGUF source URL and runs `lms import` on that downloaded file;
   arbitrary Hugging Face files never use `ollama pull` or a catalogue search
   command.
-- MLX: require at least one positively sized `.safetensors` weight file, add
-  known positive weights, configuration, and tokenizer runtime-file sizes, then
-  require the aggregate artifact to meet the 100 MB minimum. A missing size for
-  any recognized required runtime file excludes the artifact. Its guidance uses
-  `uvx --from mlx-lm mlx_lm.generate`. It supports MLX.
+- MLX: require at least one positively sized `.safetensors` weight file, then
+  sum every file in the repository snapshot—not only recognised runtime assets.
+  Any unknown, non-integer, or non-positive included file size excludes the
+  artifact, and the aggregate must meet the 100 MB minimum. This keeps snapshot
+  download estimates conservative. Its guidance uses `uvx --from mlx-lm
+  mlx_lm.generate`. It supports MLX.
 - Disk fit is strict: the exact byte size must be no greater than free disk.
+  It remains a best-effort estimate: imports can require temporary disk space,
+  and recommendations warn when less than 20% disk remains after download.
 - Memory estimate adds conservative file-mapping, runtime, and context overhead.
   Small (4K tokens) is for short chats, Normal (16K tokens) is the default for
   typical chat/coding, and Long (32K tokens) reserves more headroom for large
   documents or repositories. A selected runtime filters results to directly
   usable formats and gives each card one exact-file setup command.
-  A model is omitted when the estimate exceeds unified memory.
+  A model is omitted when the estimate exceeds unified memory. Recommendations
+  warn when estimated unified-memory headroom is below 2 GB; eligibility itself
+  remains unchanged. Fit estimates are not run-success guarantees.
 - Gated models remain eligible, but carry a sign-in and licence-acceptance note.
-- When Hugging Face supplies a repository revision, exact GGUF file links and
-  MLX repository links use that revision rather than a moving branch; links fall
-  back to `main` or the repository root when it is unavailable. Available
+  Their guidance starts with `hf auth login`, downloads the exact artifact or
+  repository snapshot at the immutable Hugging Face revision when available,
+  then runs the runtime-specific local import command.
+- When Hugging Face supplies a repository revision, it is retained in normalized
+  artifact metadata. Exact GGUF file links and MLX repository links use that
+  revision rather than a moving branch; links fall back to `main` or the
+  repository root when it is unavailable. Available
   licence metadata is shown alongside gated-model notes.
 
 The ranking score combines parameter metadata when available, workload fit, a
@@ -192,8 +201,10 @@ remain excluded and are never shown as installable artifacts.
 `expectedPace` compares a chip profile's published family memory bandwidth with
 the estimated memory footprint and returns `Fast`, `Moderate`, or `Slow`.
 This is deliberately qualitative, never a tokens-per-second claim. Memory
-statuses are `Comfortable`, `Tight memory`, and `Likely slow`; the latter
-two add operational notes.
+statuses are `Comfortable`, `Tight memory`, and `Likely slow`; the latter two
+add operational notes. All fit language is best-effort rather than a strict
+guarantee, because installed apps, import workflows, thermals, and other active
+workloads can change the result.
 
 ## Catalogue lifecycle
 

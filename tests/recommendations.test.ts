@@ -50,7 +50,7 @@ test("validates optional runtime and context preferences without requiring them 
   assert.equal(validateConfig({ ...mac, context: "huge" }).valid, false);
 });
 test("enforces exact disk boundaries and estimates from exact bytes", () => { assert.equal(rankArtifacts([gguf], { ...mac, diskGb: 4.999999999 }).length, 0); assert.equal(rankArtifacts([gguf], { ...mac, diskGb: 5 }).length, 1); assert.ok(estimateMemoryGb({ ...gguf, sizeGb: 1 }) > 5); });
-test("ranks coding models and carries gated and licence warnings plus runtime commands", () => { const generic = { ...gguf, id: "org/Chat-8B-GGUF", modelId: "org/Chat-8B-GGUF", title: "Chat 8B", paramsB: 8, tags: [] }; const gated = { ...gguf, gated: true, licence: "apache-2.0" }; const ranked = rankArtifacts([generic, gated], mac); assert.equal(ranked[0].title, "Coder 7B"); assert.ok(ranked[0].notes.some((note) => note.startsWith("Gated"))); assert.ok(ranked[0].notes.some((note) => note.startsWith("Licence: apache-2.0"))); assert.ok(ranked[0].guidance.some((g) => g.runtime === "llama.cpp" && g.command.includes("-hf"))); });
+test("ranks coding models and carries gated and licence warnings plus runtime commands", () => { const generic = { ...gguf, id: "org/Chat-8B-GGUF", modelId: "org/Chat-8B-GGUF", title: "Chat 8B", paramsB: 8, tags: [] }; const gated = { ...gguf, gated: true, licence: "apache-2.0" }; const ranked = rankArtifacts([generic, gated], mac); assert.equal(ranked[0].title, "Coder 7B"); assert.ok(ranked[0].notes.some((note) => note.startsWith("Gated"))); assert.ok(ranked[0].notes.some((note) => note.startsWith("Licence: apache-2.0"))); assert.ok(ranked[0].guidance.some((g) => g.runtime === "llama.cpp" && g.command.includes("hf auth login") && g.command.includes("-m"))); });
 test("uses Hugging Face task metadata as a bounded workload preference", () => {
   const coding = { ...gguf, id: "org/Code-GGUF/file.gguf", modelId: "org/Code-GGUF", title: "Plain model", tags: ["coding"], pipelineTag: undefined };
   const chat = { ...gguf, id: "org/Chat-GGUF/file.gguf", modelId: "org/Chat-GGUF", title: "Plain model", tags: [], pipelineTag: "text2text-generation" };
@@ -90,6 +90,30 @@ test("uses exact-file LM Studio and mlx-lm installation guidance", () => {
   const mlxGuidance = buildGuidance(mlx, ["MLX"])[0].command;
   assert.match(mlxGuidance, /uvx --from mlx-lm mlx_lm\.generate/);
 });
+test("uses authenticated exact-revision downloads for gated artifacts", () => {
+  const gated = { ...gguf, gated: true, revision: "9f4d7c1" };
+  const ollama = buildGuidance(gated, ["Ollama"])[0].command;
+  assert.match(ollama, /hf auth login/);
+  assert.match(ollama, /hf download 'org\/Coder-7B-GGUF' 'model\.Q4_K_M\.gguf' --revision '9f4d7c1'/);
+  assert.match(ollama, /ollama create local-model/);
+  assert.doesNotMatch(ollama, /curl -L/);
+
+  const gatedMlx = buildGuidance({ ...mlx, gated: true, revision: "a1b2c3" }, ["MLX"])[0].command;
+  assert.match(gatedMlx, /hf auth login/);
+  assert.match(gatedMlx, /hf download 'mlx-community\/Coder-7B-4bit' --revision 'a1b2c3'/);
+  assert.match(gatedMlx, /mlx_lm\.generate/);
+});
+test("keeps non-gated runtime guidance unchanged", () => {
+  assert.doesNotMatch(buildGuidance(gguf, ["Ollama"])[0].command, /hf auth login/);
+  assert.doesNotMatch(buildGuidance(mlx, ["MLX"])[0].command, /hf auth login/);
+});
+test("warns about near disk and memory limits without changing eligibility", () => {
+  const diskNearLimit = rankArtifacts([{ ...gguf, sizeBytes: 9_000_000_000, sizeGb: 9 }], { ...mac, diskGb: 10, memoryGb: 16 })[0];
+  assert.ok(diskNearLimit.notes.some((note) => note.startsWith("Near disk limit")));
+  const memoryNearLimit = rankArtifacts([{ ...gguf, sizeBytes: 12_000_000_000, sizeGb: 12, paramsB: undefined }], { ...mac, diskGb: 20, memoryGb: 16 })[0];
+  assert.ok(memoryNearLimit, "an artifact below the existing memory threshold remains eligible");
+  assert.ok(memoryNearLimit.notes.some((note) => note.startsWith("Near memory limit")));
+});
 test("returns typed fit explanations and actionable exclusion categories", () => {
   const tooLarge = { ...gguf, id: "org/Large-GGUF/file.gguf", modelId: "org/Large-GGUF", sizeBytes: 13_000_000_000, sizeGb: 13 };
   const tooHungry = { ...gguf, id: "org/Memory-GGUF/file.gguf", modelId: "org/Memory-GGUF", sizeBytes: 11_500_000_000, sizeGb: 11.5, paramsB: 100 };
@@ -104,13 +128,15 @@ test("returns typed fit explanations and actionable exclusion categories", () =>
   assert.ok(result.recommendations[0].explanation.rankingFactors.length >= 3);
 });
 test("normalizes exact GGUF and aggregate MLX artifact sizes", () => {
-  const model = { id: "org/Test-GGUF", pipeline_tag: "text-generation", siblings: [{ rfilename: "large.Q8.gguf", size: 8_000_000_000 }, { rfilename: "small.Q4_K_M.gguf", size: 4_000_000_001 }, { rfilename: "weights.safetensors", size: 3_000_000_000 }, { rfilename: "config.json", size: 12_000 }, { rfilename: "tokenizer.json", size: 8_000 }, { rfilename: "README.md", size: 900_000_000 }] };
+  const model = { id: "org/Test-GGUF", sha: "immutable-revision", pipeline_tag: "text-generation", siblings: [{ rfilename: "large.Q8.gguf", size: 8_000_000_000 }, { rfilename: "small.Q4_K_M.gguf", size: 4_000_000_001 }, { rfilename: "weights.safetensors", size: 3_000_000_000 }, { rfilename: "config.json", size: 12_000 }, { rfilename: "tokenizer.json", size: 8_000 }, { rfilename: "README.md", size: 900_000_000 }] };
   const ggufArtifacts = normalizeModels([model], "gguf"); const mlxArtifact = normalizeModels([model], "mlx")[0];
   assert.deepEqual(ggufArtifacts.map((artifact) => [artifact.filename, artifact.quantization, artifact.sizeBytes]), [["small.Q4_K_M.gguf", "Q4_K_M", 4_000_000_001], ["large.Q8.gguf", "Q8", 8_000_000_000]]);
-  assert.equal(mlxArtifact.sizeBytes, 3_000_020_000);
+  assert.equal(mlxArtifact.sizeBytes, 15_900_020_001);
   assert.equal(ggufArtifacts[0].pipelineTag, "text-generation");
+  assert.equal(ggufArtifacts[0].revision, "immutable-revision");
   assert.equal(normalizeModels([{ id: "org/bad", siblings: [{ rfilename: "tiny.gguf", size: 1 }] }], "gguf").length, 0);
   assert.equal(normalizeModels([{ id: "org/unknown-tokenizer", siblings: [{ rfilename: "weights.safetensors", size: 3_000_000_000 }, { rfilename: "tokenizer.json" }] }], "mlx").length, 0);
+  assert.equal(normalizeModels([{ id: "org/unknown-extra", siblings: [{ rfilename: "weights.safetensors", size: 3_000_000_000 }, { rfilename: "unrecognised.bin" }] }], "mlx").length, 0);
   assert.equal(normalizeModels([{ id: "org/config-only", siblings: [{ rfilename: "config.json", size: 120_000_000 }, { rfilename: "tokenizer.json", size: 1_000 }] }], "mlx").length, 0);
 });
 test("keeps multiple GGUF quantization variants from one model family", () => {

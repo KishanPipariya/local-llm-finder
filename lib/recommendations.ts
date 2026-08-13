@@ -18,6 +18,8 @@ export type Artifact = {
   pipelineTag?: string;
   sourceUrl: string;
   repositoryUrl: string;
+  /** Immutable Hugging Face commit revision when supplied by the catalogue. */
+  revision?: string;
   filename?: string;
 };
 
@@ -146,11 +148,22 @@ function shellQuote(value: string) {
 export function buildGuidance(item: Artifact, runtimes: Recommendation["runtimes"]): Recommendation["guidance"] {
   const artifact = item.filename ? `${item.modelId}/${item.filename}` : item.modelId;
   const filename = item.filename ?? "model.gguf";
+  const revision = item.revision ?? "main";
+  const localModelDirectory = item.modelId.replace(/[^a-zA-Z0-9._-]+/g, "-");
+  const authenticatedDownload = item.filename
+    ? `hf auth login && hf download ${shellQuote(item.modelId)} ${shellQuote(item.filename)} --revision ${shellQuote(revision)} --local-dir .`
+    : `hf auth login && hf download ${shellQuote(item.modelId)} --revision ${shellQuote(revision)} --local-dir ${shellQuote(localModelDirectory)}`;
   return runtimes.map((runtime) => {
-    if (runtime === "Ollama") return { runtime, command: `curl -L ${shellQuote(item.sourceUrl)} -o ${shellQuote(filename)} && printf '%s\\n' ${shellQuote(`FROM ./${filename}`)} > Modelfile && ollama create local-model -f Modelfile && ollama run local-model` };
-    if (runtime === "LM Studio") return { runtime, command: `curl -L ${shellQuote(item.sourceUrl)} -o ${shellQuote(filename)} && lms import ${shellQuote(filename)}` };
-    if (runtime === "llama.cpp") return { runtime, command: `llama-cli -hf ${shellQuote(artifact)} -p "Hello"` };
-    return { runtime, command: `uvx --from mlx-lm mlx_lm.generate --model ${shellQuote(item.modelId)} --prompt "Hello"` };
+    if (!item.gated) {
+      if (runtime === "Ollama") return { runtime, command: `curl -L ${shellQuote(item.sourceUrl)} -o ${shellQuote(filename)} && printf '%s\\n' ${shellQuote(`FROM ./${filename}`)} > Modelfile && ollama create local-model -f Modelfile && ollama run local-model` };
+      if (runtime === "LM Studio") return { runtime, command: `curl -L ${shellQuote(item.sourceUrl)} -o ${shellQuote(filename)} && lms import ${shellQuote(filename)}` };
+      if (runtime === "llama.cpp") return { runtime, command: `llama-cli -hf ${shellQuote(artifact)} -p "Hello"` };
+      return { runtime, command: `uvx --from mlx-lm mlx_lm.generate --model ${shellQuote(item.modelId)} --prompt "Hello"` };
+    }
+    if (runtime === "Ollama") return { runtime, command: `${authenticatedDownload} && printf '%s\\n' ${shellQuote(`FROM ./${filename}`)} > Modelfile && ollama create local-model -f Modelfile && ollama run local-model` };
+    if (runtime === "LM Studio") return { runtime, command: `${authenticatedDownload} && lms import ${shellQuote(filename)}` };
+    if (runtime === "llama.cpp") return { runtime, command: `${authenticatedDownload} && llama-cli -m ${shellQuote(filename)} -p "Hello"` };
+    return { runtime, command: `${authenticatedDownload} && uvx --from mlx-lm mlx_lm.generate --model ${shellQuote(localModelDirectory)} --prompt "Hello"` };
   });
 }
 
@@ -179,6 +192,8 @@ export function rankArtifactsWithExplanations(artifacts: Artifact[], config: Mac
     const category = workloadCategory(item);
     const diskHeadroom = Math.round((config.diskGb * 1e9 - item.sizeBytes) / 1e6) * 1e6;
     const memoryHeadroom = Math.round((config.memoryGb - memoryGb) * 10) / 10;
+    if (diskHeadroom / (config.diskGb * 1e9) < 0.2) notes.push("Near disk limit: less than 20% free space remains after download; importing may need temporary disk space.");
+    if (memoryHeadroom < 2) notes.push("Near memory limit: less than 2 GB of estimated unified-memory headroom remains.");
     const rankingFactors = [
       workloadRelevance(category, config.workload),
       item.paramsB ? `${item.paramsB}B parameter metadata contributes to capacity ranking.` : "Parameter metadata was unavailable, so download size is not treated as a capability signal.",
