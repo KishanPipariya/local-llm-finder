@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { createServer } from "node:net";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, type BrowserContext, type Page } from "playwright";
-import { chipProfiles, chips, validateConfig } from "../lib/recommendations.js";
+import { chipProfiles, validateConfig } from "../lib/recommendations.js";
 
 async function allocatePort() {
   const listener = createServer();
@@ -85,9 +85,10 @@ const context = await browser.newContext();
 try {
   const initial = await waitForPage(context);
   await assertNoAxeViolations(initial, "initial finder");
-  assert.equal(await initial.getByText("Ollama is the simplest starting point", { exact: false }).count(), 1, "runtime helper gives beginners a recommended starting point");
+  assert.equal(await initial.getByText("Ollama is the recommended default.", { exact: false }).count(), 1, "runtime helper gives beginners a recommended starting point");
   assert.deepEqual(await initial.locator('input[name="runtime"]').evaluateAll((inputs) => inputs.map((input) => input.getAttribute("value"))), ["ollama", "lmStudio", "mlx", "llamaCpp"], "runtime choices put the beginner recommendation first");
-  assert.deepEqual(await initial.locator('input[name="context"]').evaluateAll((inputs) => inputs.map((input) => input.parentElement?.textContent?.trim())), ["Short · 4KA few messages or a small file", "Normal · 16KTypical chat or coding · recommended", "Long · 32KLarge documents or repositories"], "context choices explain conversation size in plain language");
+  assert.deepEqual(await initial.locator('input[name="context"]').evaluateAll((inputs) => inputs.map((input) => input.parentElement?.textContent?.trim())), ["Short · 4KA short conversation or one small file", "Normal · 16KChat and a few files · recommended", "Long · 32KLarge documents or repositories"], "context choices explain conversation size in plain language");
+  assert.equal(await initial.locator('.runtime small').count(), 4, "every runtime option includes a plain-language description");
   const specsHelper = initial.locator(".specs-helper");
   const specsSummary = specsHelper.locator("summary");
   const specsBox = await specsSummary.boundingBox();
@@ -124,14 +125,14 @@ try {
   const lightSurface = await initial.locator("body").evaluate((body) => getComputedStyle(body).backgroundColor);
   await initial.keyboard.press("Tab");
   assert.equal(await initial.locator(":focus").textContent(), "Skip to the model finder");
-  const button = initial.getByRole("button", { name: "Find compatible models" });
+  const button = initial.getByRole("button", { name: "Find models for M4 · 16 GB" });
   const buttonBox = await button.boundingBox();
   assert.ok(buttonBox && buttonBox.width >= 44 && buttonBox.height >= 44, "submit target is at least 44 by 44 CSS pixels");
 
-  const allMemoryValues = [...new Set(chips.flatMap((chip) => chip.memoryOptionsGb))].sort((a, b) => a - b).map(String);
-  assert.deepEqual(await initial.locator("#memoryGb option").evaluateAll((options) => options.map((option) => option.getAttribute("value"))), allMemoryValues, "initial memory list is comprehensive");
+  assert.deepEqual(await initial.locator("#memoryGb option").evaluateAll((options) => options.map((option) => option.getAttribute("value"))), chipProfiles.m4.memoryOptionsGb.map(String), "initial memory list contains only options supported by the selected chip");
   await initial.waitForTimeout(250);
-  assert.deepEqual(await initial.locator("#memoryGb option").evaluateAll((options) => options.map((option) => option.getAttribute("value"))), allMemoryValues, "hydration does not change the initial memory list");
+  assert.deepEqual(await initial.locator("#memoryGb option").evaluateAll((options) => options.map((option) => option.getAttribute("value"))), chipProfiles.m4.memoryOptionsGb.map(String), "hydration retains the selected chip's valid memory options");
+  assert.match(await initial.locator(".profile-summary").textContent() ?? "", /M4 · 16 GB[\s\S]*80 GB available storage[\s\S]*Balanced use[\s\S]*Normal context[\s\S]*Ollama/, "initial profile summary contains the selected configuration");
 
   await assertUnchangedBox(initial, ".workload label:has(input[value=balanced]) span", () => initial.locator(".workload label:has(input[value=chat])").click(), "selecting a workload choice");
   await assertUnchangedBox(initial, ".workload label:has(input[value=chat]) span", () => initial.locator(".workload label:has(input[value=chat])").hover(), "hovering a workload choice");
@@ -146,9 +147,11 @@ try {
   await initial.locator("#memoryGb").selectOption("16");
   await initial.locator("#chip").selectOption("m4Pro");
   assert.equal(await initial.locator("#memoryGb").inputValue(), "24");
+  assert.match(await initial.locator(".profile-summary").textContent() ?? "", /M4 Pro · 24 GB/, "profile summary updates after an automatic memory adjustment");
+  assert.equal(await initial.getByRole("button", { name: "Find models for M4 Pro · 24 GB" }).count(), 1, "submit label reflects the current hardware profile");
   await assertNoAxeViolations(initial, "chip-adjusted finder");
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(await initial.locator("[aria-live=polite]").textContent(), "Unified memory adjusted to 24 GB for M4 Pro.");
+  assert.equal(await initial.locator(".sr-only[aria-live=polite]").textContent(), "Unified memory adjusted to 24 GB for M4 Pro.");
 
   await initial.locator("#chip").selectOption("m4");
   await initial.locator("#memoryGb").selectOption("24");
@@ -190,6 +193,8 @@ try {
   assert.equal(await invalid.locator(":focus").getAttribute("class"), "error-summary");
   assert.equal(await invalid.locator("#memoryGb").getAttribute("aria-invalid"), "true");
   assert.equal(await invalid.locator("#memoryGb").getAttribute("aria-describedby"), "memory-error");
+  await invalid.getByRole("link", { name: "Choose a memory configuration supported by that chip." }).click();
+  assert.equal(await invalid.locator(":focus").getAttribute("id"), "memoryGb", "validation recovery links focus their invalid control");
   await assertPhoneLayout(invalid, "320px invalid finder");
 
   const narrowResults = await narrowContext.newPage();
@@ -235,7 +240,7 @@ try {
   await noScript.locator("#chip").selectOption("m4");
   await noScript.locator("#memoryGb").selectOption("16");
   await noScript.locator("#diskGb").fill("12");
-  await noScript.getByRole("button", { name: "Find compatible models" }).click({ force: true, noWaitAfter: true });
+  await noScript.getByRole("button", { name: "Find models for M4 · 16 GB" }).click({ force: true, noWaitAfter: true });
   await noScript.waitForURL(/memoryGb=16/);
   assert.match(noScript.url(), /chip=m4/);
   assert.equal(await noScript.locator(".error-summary").count(), 0);

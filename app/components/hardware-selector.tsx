@@ -1,9 +1,7 @@
 "use client";
 
-import { useState, type ChangeEvent } from "react";
+import type { ChangeEvent } from "react";
 import { chipProfiles, chips, type Chip, type ConfigFieldErrors } from "@/lib/hardware";
-
-const allMemoryOptions = [...new Set(chips.flatMap((chip) => chip.memoryOptionsGb))].sort((a, b) => a - b);
 
 function closestMemoryOption(memoryGb: number, options: readonly number[]) {
   return options.reduce((closest, option) => {
@@ -13,32 +11,24 @@ function closestMemoryOption(memoryGb: number, options: readonly number[]) {
   });
 }
 
-export function HardwareSelector({ chip, memoryGb, fieldErrors }: { chip: Chip; memoryGb: number; fieldErrors: ConfigFieldErrors }) {
-  const [selectedChip, setSelectedChip] = useState(chip);
-  const [selectedMemoryGb, setSelectedMemoryGb] = useState(memoryGb);
-  const [hasChangedChip, setHasChangedChip] = useState(false);
-  const [status, setStatus] = useState("");
-  const memoryOptions = hasChangedChip ? chipProfiles[selectedChip].memoryOptionsGb : allMemoryOptions;
-  const renderedMemoryGb = selectedMemoryGb;
+export function HardwareSelector({ chip, memoryGb, fieldErrors, onChange, status }: { chip: Chip; memoryGb: number; fieldErrors: ConfigFieldErrors; onChange: (chip: Chip, memoryGb: number, status: string) => void; status: string }) {
+  const memoryOptions = chipProfiles[chip].memoryOptionsGb as readonly number[];
 
   function handleChipChange(event: ChangeEvent<HTMLSelectElement>) {
     const nextChip = event.target.value as Chip;
-    const nextMemoryGb = closestMemoryOption(renderedMemoryGb, chipProfiles[nextChip].memoryOptionsGb);
-    setSelectedChip(nextChip);
-    setSelectedMemoryGb(nextMemoryGb);
-    setHasChangedChip(true);
-    setStatus(nextMemoryGb === selectedMemoryGb ? "" : `Unified memory adjusted to ${nextMemoryGb} GB for ${chipProfiles[nextChip].name}.`);
+    const nextMemoryGb = closestMemoryOption(memoryGb, chipProfiles[nextChip].memoryOptionsGb as readonly number[]);
+    onChange(nextChip, nextMemoryGb, nextMemoryGb === memoryGb ? "" : `Unified memory adjusted to ${nextMemoryGb} GB for ${chipProfiles[nextChip].name}.`);
   }
 
   return <>
     <label htmlFor="chip">Apple chip
-      <select id="chip" name="chip" required value={selectedChip} onChange={handleChipChange} aria-invalid={Boolean(fieldErrors.chip)} aria-describedby={fieldErrors.chip ? "chip-error" : undefined}>
+      <select id="chip" name="chip" required value={chip} onChange={handleChipChange} aria-invalid={Boolean(fieldErrors.chip)} aria-describedby={fieldErrors.chip ? "chip-error" : undefined}>
         {chips.map((chipOption) => <option key={chipOption.id} value={chipOption.id}>{chipOption.name}</option>)}
       </select>
       {fieldErrors.chip && <span className="field-error" id="chip-error">{fieldErrors.chip}</span>}
     </label>
     <label htmlFor="memoryGb">Unified memory (GB)
-      <select id="memoryGb" name="memoryGb" required value={renderedMemoryGb} onChange={(event) => { setSelectedMemoryGb(Number(event.target.value)); setStatus(""); }} aria-invalid={Boolean(fieldErrors.memoryGb)} aria-describedby={fieldErrors.memoryGb ? "memory-error" : undefined}>
+      <select id="memoryGb" name="memoryGb" required value={memoryGb} onChange={(event) => onChange(chip, Number(event.target.value), "")} aria-invalid={Boolean(fieldErrors.memoryGb)} aria-describedby={fieldErrors.memoryGb ? "memory-error" : undefined}>
         {memoryOptions.map((memoryOption) => <option key={memoryOption} value={memoryOption}>{memoryOption} GB</option>)}
       </select>
       {fieldErrors.memoryGb && <span className="field-error" id="memory-error">{fieldErrors.memoryGb}</span>}

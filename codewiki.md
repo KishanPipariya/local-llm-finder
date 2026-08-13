@@ -31,12 +31,15 @@ Mac, free-storage, and runtime assumptions and includes a complete valid
 configuration, so it is shareable and lands directly on server-rendered results
 without JavaScript. The form includes a native “Find your Mac specs” disclosure
 that explains chip, unified memory, and free disk space in plain language.
-`HardwareSelector` is a small progressive-enhancement client component. Its
-initial server-rendered and hydrated states retain the complete memory list, so
-the selector does not shift at load time and no-JavaScript users keep the same
-server-validated fallback flow. After the user explicitly changes the chip, it
-exposes only that chip's supported unified-memory options and chooses the
-closest valid amount (ties go lower) when the current amount is impossible.
+`FinderForm` and its small `HardwareSelector` enhancement render only the
+selected chip's valid unified-memory options from the initial server response.
+With JavaScript, changing chip retains a compatible memory amount or chooses the
+closest valid amount (ties go lower), then announces the adjustment. The live
+“Profile ready” summary and submit label reflect chip, memory, available
+storage, use, context, and runtime as choices change. Without JavaScript, the
+same GET form remains usable and server validation provides field-specific
+recovery for impossible shared URLs. Validation summaries link directly to the
+invalid control and focus it when activated.
 Once any configuration query parameter is present, the four
 hardware/workload fields are required; runtime and context are optional for
 backwards-compatible shared URLs. Incomplete direct GET requests receive the same
@@ -80,8 +83,8 @@ and long links and disclosure summaries wrap rather than overflow.
 | `app/components/hero.tsx` | Static editorial hero and privacy promise. |
 | `app/components/preset-links.tsx` | Complete, shareable GET profile links. |
 | `app/components/site-footer.tsx` | Product constraints and runtime-format footer. |
-| `app/components/finder-form.tsx` | Accessible configuration form and field-level validation messages. |
-| `app/components/hardware-selector.tsx` | Client-side chip/memory filtering and accessible automatic-adjustment announcement. |
+| `app/components/finder-form.tsx` | Progressively enhanced accessible configuration form, live profile summary, contextual guidance, and field-level validation recovery. |
+| `app/components/hardware-selector.tsx` | Chip-valid memory selector and accessible automatic-adjustment announcement. |
 | `app/components/results.tsx` | Results heading, submitted setup summary/edit link, top-pick and alternatives grouping, no-results recovery, catalogue disclosure, and actionable exclusion disclosure. |
 | `app/components/results-header.tsx` | Timestamp, stale-status, and shortlist heading presentation. |
 | `app/components/recommendation-card.tsx` | Recommendation fit explanation, metric hierarchy, source-aware Ollama/Hugging Face link, licence and gated-model notices, and initially collapsed installation and technical/ranking disclosures. |
