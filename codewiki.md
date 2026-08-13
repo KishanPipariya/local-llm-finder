@@ -142,12 +142,15 @@ artifacts.
 - GGUF: retain every valid Hugging Face `.gguf` file as a separate quantization
   variant (Q2–Q8, IQ variants, and F16/BF16/F32 labels when present). It supports
   Ollama, LM Studio, and llama.cpp. Its Ollama guidance remains the explicit
-  download-and-`ollama create` import recipe; arbitrary Hugging Face files never
-  use `ollama pull`.
-- MLX: add known positive weights, configuration, and tokenizer runtime-file
-  sizes, then require the aggregate artifact to meet the 100 MB minimum. A
-  missing size for any recognized required runtime file excludes the artifact.
-  It supports MLX.
+  download-and-`ollama create` import recipe; LM Studio guidance downloads the
+  exact verified GGUF source URL and runs `lms import` on that downloaded file;
+  arbitrary Hugging Face files never use `ollama pull` or a catalogue search
+  command.
+- MLX: require at least one positively sized `.safetensors` weight file, add
+  known positive weights, configuration, and tokenizer runtime-file sizes, then
+  require the aggregate artifact to meet the 100 MB minimum. A missing size for
+  any recognized required runtime file excludes the artifact. Its guidance uses
+  `uvx --from mlx-lm mlx_lm.generate`. It supports MLX.
 - Disk fit is strict: the exact byte size must be no greater than free disk.
 - Memory estimate adds conservative file-mapping, runtime, and context overhead.
   Small (4K tokens) is for short chats, Normal (16K tokens) is the default for
@@ -198,10 +201,13 @@ two add operational notes.
 requests: popular GGUF repositories and repositories from `mlx-community`.
 Because those list responses contain filenames but not reliable byte sizes, it
 then obtains each selected repository's `blobs=true` metadata with a bounded
-concurrency of six. A repository that disappears or fails during that second
-step is excluded; its unverified files are never recommended. Each request has
-a 12-second timeout, while a complete refresh has a 30-second deadline that
-aborts all outstanding work. An empty usable catalogue fails the full refresh.
+global concurrency of six across both formats. A repository that disappears or
+fails during that second step is excluded; its unverified files are never
+recommended. Each request has a 12-second timeout, while a complete refresh has
+a 30-second deadline that aborts all outstanding work. A refresh-controller
+abort fails the complete refresh atomically rather than returning a partial
+catalogue, so the last valid local catalogue can be served as stale. An empty
+usable catalogue also fails the full refresh.
 
 Next.js `unstable_cache` wraps the complete production refresh under a stable
 key with a six-hour revalidation interval, sharing the full upstream crawl across

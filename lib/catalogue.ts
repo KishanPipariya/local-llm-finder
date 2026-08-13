@@ -29,6 +29,7 @@ const titleOf = (id: string) => id.split("/").at(-1)?.replace(/-(GGUF|MLX)$/i, "
 const validSize = (size: unknown): size is number => typeof size === "number" && Number.isSafeInteger(size) && size >= MIN_ARTIFACT_BYTES;
 const knownFileSize = (size: unknown): size is number => typeof size === "number" && Number.isSafeInteger(size) && size > 0;
 const isMlxRuntimeFile = (filename: string) => /(?:^|\/)(?:[^/]+\.safetensors|[^/]+\.safetensors\.index\.json|(?:config|generation_config|tokenizer(?:_config)?|special_tokens_map|added_tokens|preprocessor_config|processor_config|vocab)\.json|[^/]+\.model|chat_template\.jinja|merges\.txt|[^/]+\.tiktoken)$/i.test(filename);
+const isMlxWeightFile = (file: HubFile) => /(?:^|\/)[^/]+\.safetensors$/i.test(file.rfilename) && knownFileSize(file.size);
 const repoUrl = (id: string) => `https://huggingface.co/${id}`;
 const revisionUrl = (id: string, revision?: string) => revision ? `${repoUrl(id)}/tree/${encodeURIComponent(revision)}` : repoUrl(id);
 const fileUrl = (id: string, filename: string, revision?: string) => `${repoUrl(id)}/resolve/${encodeURIComponent(revision ?? "main")}/${filename.split("/").map(encodeURIComponent).join("/")}`;
@@ -130,7 +131,7 @@ export function normalizeModels(models: HubModel[], format: Artifact["format"]):
     // every known runtime file and reject an aggregate if any required size is
     // missing, so the displayed disk check remains conservative.
     const sizeBytes = format === "gguf" ? undefined : matched.reduce((sum, file) => knownFileSize(file.size) ? sum + file.size : Number.NaN, 0);
-    if (format === "mlx" && !validSize(sizeBytes)) return [];
+    if (format === "mlx" && (!matched.some(isMlxWeightFile) || !validSize(sizeBytes))) return [];
     return selectedFiles.flatMap((selected) => {
       const artifactSize = format === "gguf" ? selected!.size : sizeBytes;
       if (!validSize(artifactSize)) return [];
@@ -173,7 +174,10 @@ export { mapWithConcurrency } from "./catalogue-request";
 async function retrieveModelMetadata(model: HubModel, fetcher: FetchLike, refreshSignal: AbortSignal): Promise<HubModel | undefined> {
   try {
     return normalizeHubModel(await fetchJson(modelInfoUrl(model.id), fetcher, refreshSignal, "Hugging Face"));
-  } catch {
+  } catch (error) {
+    // The overall refresh deadline invalidates the entire sample. A request
+    // timeout or ordinary repository failure remains isolated to that one repo.
+    if (refreshSignal.aborted) throw refreshSignal.reason ?? error;
     // A repository can disappear or be temporarily unavailable between the
     // list and detail requests. Excluding that one unverified artifact keeps
     // the remaining, size-verified catalogue usable.
@@ -185,27 +189,32 @@ export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeo
   const refreshController = new AbortController();
   const deadline = setTimeout(() => refreshController.abort(new Error("Hugging Face catalogue refresh timed out")), refreshTimeoutMs);
   try {
-  const base = `${HUB_BASE}?full=true&limit=20&sort=downloads&direction=-1`;
-  const [ggufList, mlxList] = await Promise.all([
-    fetchJson(`${base}&search=GGUF`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
-    fetchJson(`${base}&author=mlx-community`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
-  ]);
-  // List responses contain filenames but no byte sizes. Fetch each selected
-  // repository's blob metadata before normalizing, otherwise conservative size
-  // validation would exclude every artifact.
-  const [ggufModels, mlxModels] = await Promise.all([
-    mapWithConcurrency(ggufList, 6, (model) => retrieveModelMetadata(model, fetcher, refreshController.signal)),
-    mapWithConcurrency(mlxList, 6, (model) => retrieveModelMetadata(model, fetcher, refreshController.signal)),
-  ]);
-  const verifiedGgufModels = ggufModels.filter((model): model is HubModel => model !== undefined);
-  const verifiedMlxModels = mlxModels.filter((model): model is HubModel => model !== undefined);
-  const items = [...normalizeModels(verifiedGgufModels, "gguf"), ...normalizeModels(verifiedMlxModels, "mlx")];
-  if (!items.length) throw new Error("Hugging Face catalogue returned no usable artifacts");
-  const ggufExclusions = normalizationExclusions(verifiedGgufModels, "gguf");
-  const mlxExclusions = normalizationExclusions(verifiedMlxModels, "mlx");
-  return { items, refreshedAt: new Date().toISOString(), exclusions: { invalidSize: (ggufExclusions.invalidSize ?? 0) + (mlxExclusions.invalidSize ?? 0), unsupportedFormat: (ggufExclusions.unsupportedFormat ?? 0) + (mlxExclusions.unsupportedFormat ?? 0) } };
+    const base = `${HUB_BASE}?full=true&limit=20&sort=downloads&direction=-1`;
+    const [ggufList, mlxList] = await Promise.all([
+      fetchJson(`${base}&search=GGUF`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
+      fetchJson(`${base}&author=mlx-community`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
+    ]);
+    // List responses contain filenames but no byte sizes. Fetch each selected
+    // repository's blob metadata before normalizing, otherwise conservative size
+    // validation would exclude every artifact. Both formats share one upstream
+    // limit so a mixed catalogue refresh never exceeds six detail requests.
+    const detailed = await mapWithConcurrency(
+      [...ggufList.map((model) => ({ format: "gguf" as const, model })), ...mlxList.map((model) => ({ format: "mlx" as const, model }))],
+      6,
+      async ({ format, model }) => ({ format, model: await retrieveModelMetadata(model, fetcher, refreshController.signal) }),
+    );
+    refreshController.signal.throwIfAborted();
+    const verifiedGgufModels = detailed.filter((entry): entry is { format: "gguf"; model: HubModel } => entry.format === "gguf" && entry.model !== undefined).map((entry) => entry.model);
+    const verifiedMlxModels = detailed.filter((entry): entry is { format: "mlx"; model: HubModel } => entry.format === "mlx" && entry.model !== undefined).map((entry) => entry.model);
+    const items = [...normalizeModels(verifiedGgufModels, "gguf"), ...normalizeModels(verifiedMlxModels, "mlx")];
+    if (!items.length) throw new Error("Hugging Face catalogue returned no usable artifacts");
+    const ggufExclusions = normalizationExclusions(verifiedGgufModels, "gguf");
+    const mlxExclusions = normalizationExclusions(verifiedMlxModels, "mlx");
+    return { items, refreshedAt: new Date().toISOString(), exclusions: { invalidSize: (ggufExclusions.invalidSize ?? 0) + (mlxExclusions.invalidSize ?? 0), unsupportedFormat: (ggufExclusions.unsupportedFormat ?? 0) + (mlxExclusions.unsupportedFormat ?? 0) } };
   } finally {
     clearTimeout(deadline);
+    // Stop parallel upstream work whenever this refresh completes or fails.
+    if (!refreshController.signal.aborted) refreshController.abort();
   }
 }
 

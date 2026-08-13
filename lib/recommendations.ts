@@ -144,14 +144,13 @@ function shellQuote(value: string) {
 }
 
 export function buildGuidance(item: Artifact, runtimes: Recommendation["runtimes"]): Recommendation["guidance"] {
-  const q = item.quantization ? ` (${item.quantization})` : "";
   const artifact = item.filename ? `${item.modelId}/${item.filename}` : item.modelId;
   const filename = item.filename ?? "model.gguf";
   return runtimes.map((runtime) => {
     if (runtime === "Ollama") return { runtime, command: `curl -L ${shellQuote(item.sourceUrl)} -o ${shellQuote(filename)} && printf '%s\\n' ${shellQuote(`FROM ./${filename}`)} > Modelfile && ollama create local-model -f Modelfile && ollama run local-model` };
-    if (runtime === "LM Studio") return { runtime, command: `lms get ${shellQuote(artifact)}  # or open the exact file link in LM Studio${q}` };
+    if (runtime === "LM Studio") return { runtime, command: `curl -L ${shellQuote(item.sourceUrl)} -o ${shellQuote(filename)} && lms import ${shellQuote(filename)}` };
     if (runtime === "llama.cpp") return { runtime, command: `llama-cli -hf ${shellQuote(artifact)} -p "Hello"` };
-    return { runtime, command: `uvx mlx_lm.generate --model ${shellQuote(item.modelId)} --prompt "Hello"` };
+    return { runtime, command: `uvx --from mlx-lm mlx_lm.generate --model ${shellQuote(item.modelId)} --prompt "Hello"` };
   });
 }
 

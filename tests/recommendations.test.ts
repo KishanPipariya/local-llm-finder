@@ -80,6 +80,16 @@ test("uses Hugging Face GGUF import guidance for Ollama", () => {
   assert.match(guidance, /ollama run local-model/);
   assert.doesNotMatch(guidance, /ollama pull/);
 });
+test("uses exact-file LM Studio and mlx-lm installation guidance", () => {
+  const lmStudio = buildGuidance(gguf, ["LM Studio"])[0].command;
+  assert.ok(lmStudio.includes(gguf.sourceUrl));
+  assert.match(lmStudio, /curl -L/);
+  assert.match(lmStudio, /lms import 'model\.Q4_K_M\.gguf'/);
+  assert.doesNotMatch(lmStudio, /lms get/);
+
+  const mlxGuidance = buildGuidance(mlx, ["MLX"])[0].command;
+  assert.match(mlxGuidance, /uvx --from mlx-lm mlx_lm\.generate/);
+});
 test("returns typed fit explanations and actionable exclusion categories", () => {
   const tooLarge = { ...gguf, id: "org/Large-GGUF/file.gguf", modelId: "org/Large-GGUF", sizeBytes: 13_000_000_000, sizeGb: 13 };
   const tooHungry = { ...gguf, id: "org/Memory-GGUF/file.gguf", modelId: "org/Memory-GGUF", sizeBytes: 11_500_000_000, sizeGb: 11.5, paramsB: 100 };
@@ -101,6 +111,7 @@ test("normalizes exact GGUF and aggregate MLX artifact sizes", () => {
   assert.equal(ggufArtifacts[0].pipelineTag, "text-generation");
   assert.equal(normalizeModels([{ id: "org/bad", siblings: [{ rfilename: "tiny.gguf", size: 1 }] }], "gguf").length, 0);
   assert.equal(normalizeModels([{ id: "org/unknown-tokenizer", siblings: [{ rfilename: "weights.safetensors", size: 3_000_000_000 }, { rfilename: "tokenizer.json" }] }], "mlx").length, 0);
+  assert.equal(normalizeModels([{ id: "org/config-only", siblings: [{ rfilename: "config.json", size: 120_000_000 }, { rfilename: "tokenizer.json", size: 1_000 }] }], "mlx").length, 0);
 });
 test("keeps multiple GGUF quantization variants from one model family", () => {
   const q4 = { ...gguf, quantization: "Q4_K_M" };

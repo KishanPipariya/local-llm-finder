@@ -41,6 +41,36 @@ test("catalogue refresh uses blob metadata, tolerates an unavailable repository,
   await assert.rejects(retrieveCatalogue((async () => new Response(null, { status: 503 })) as typeof fetch));
 });
 
+test("catalogue refresh fails atomically when its deadline aborts metadata retrieval", async () => {
+  let successfulDetail = false;
+  const deadlineAbort = async (url: string, init?: RequestInit) => {
+    if (url.includes("?full=true")) return Response.json(url.includes("author=mlx-community") ? [listedMlxModel] : [listedModel]);
+    if (url.includes("org/Model-GGUF")) { successfulDetail = true; return Response.json(listedModel); }
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    });
+  };
+  await assert.rejects(retrieveCatalogue(deadlineAbort as typeof fetch, 10));
+  assert.equal(successfulDetail, true, "a successful repository cannot make a timed-out refresh partial");
+});
+
+test("catalogue refresh shares one six-request detail concurrency limit across formats", async () => {
+  const ggufModels = Array.from({ length: 5 }, (_, index) => ({ id: `org/Gguf-${index}-GGUF` }));
+  const mlxModels = Array.from({ length: 5 }, (_, index) => ({ id: `mlx-community/Mlx-${index}` }));
+  let inFlight = 0;
+  let peak = 0;
+  const boundedUpstream = async (url: string) => {
+    if (url.includes("?full=true")) return Response.json(url.includes("author=mlx-community") ? mlxModels : ggufModels);
+    inFlight += 1;
+    peak = Math.max(peak, inFlight);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    inFlight -= 1;
+    return Response.json(url.includes("mlx-community") ? listedMlxModel : listedModel);
+  };
+  await retrieveCatalogue(boundedUpstream as typeof fetch);
+  assert.equal(peak, 6);
+});
+
 test("bounded mapper preserves order and does not start workers for an empty list", async () => {
   let running = 0; let peak = 0;
   const values = await mapWithConcurrency([1, 2, 3, 4], 2, async (value) => {
