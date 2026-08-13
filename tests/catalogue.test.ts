@@ -25,7 +25,6 @@ function upstream(options: { unavailableModel?: string } = {}) {
 test("catalogue refresh fetches blob metadata for every listed repository", async () => {
   const catalogue = await retrieveCatalogue(upstream() as typeof fetch);
   assert.deepEqual(catalogue.items.map((item) => item.format).sort(), ["gguf", "mlx"]);
-  assert.equal(catalogue.items.some((item) => item.pullName), false);
 });
 
 test("catalogue refresh uses blob metadata, tolerates an unavailable repository, and rejects failed lists", async () => {
@@ -35,7 +34,7 @@ test("catalogue refresh uses blob metadata, tolerates an unavailable repository,
     return upstream()(url, init);
   };
   const catalogue = await retrieveCatalogue(listOnly as typeof fetch);
-  assert.deepEqual(catalogue.items.filter((item) => !item.pullName).map((item) => item.sizeBytes).sort((a, b) => a - b), [4_000_000_000, 4_000_002_000]);
+  assert.deepEqual(catalogue.items.map((item) => item.sizeBytes).sort((a, b) => a - b), [4_000_000_000, 4_000_002_000]);
   assert.equal(urls.filter((url) => url.includes("?blobs=true")).length, 2);
   const partial = await retrieveCatalogue(upstream({ unavailableModel: "org/Model-GGUF" }) as typeof fetch);
   assert.deepEqual(partial.items.map((item) => item.format), ["mlx"]);

@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:net";
+import { pathToFileURL } from "node:url";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, type BrowserContext, type Page } from "playwright";
-import { chipProfiles, validateConfig } from "../lib/recommendations.js";
+import { chipProfiles, validateConfig } from "../lib/hardware.js";
 
 async function allocatePort() {
   const listener = createServer();
@@ -78,7 +79,8 @@ async function assertPhoneLayout(page: Page, state: string) {
   }
 }
 
-const server = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "--port", String(port)], { stdio: "ignore", env: { ...process.env, MAC_LLM_BROWSER_TEST_FIXTURE: "1" } });
+const fetchMockImport = pathToFileURL("tests/browser-catalogue-fetch-mock.mjs").href;
+const server = spawn(process.execPath, ["--import", fetchMockImport, "node_modules/next/dist/bin/next", "start", "--port", String(port)], { stdio: "ignore", env: process.env });
 const browser = await chromium.launch();
 const context = await browser.newContext();
 
@@ -169,13 +171,15 @@ try {
   assert.equal(await initial.getByRole("link", { name: "Edit profile →" }).getAttribute("href"), "/?chip=m4&memoryGb=16&diskGb=12&workload=chat&runtime=ollama&context=normal#finder", "edit profile preserves the full configuration in its GET URL");
   assert.equal(await initial.locator(".card.top-pick").count(), 1, "the first ranked result is visually marked as the top pick");
   assert.equal(await initial.locator(".card").first().locator(".top-pick-label").textContent(), "Top pick");
-  assert.equal(await initial.getByRole("link", { name: "Install with Ollama: open llama3.2:3b on Ollama in a new tab" }).count(), 1, "top recommendation has a clearly labelled primary install action");
+  assert.equal(await initial.getByRole("link", { name: "Install with Ollama: open llama-3.2-3b.Q4_K_M.gguf on Hugging Face in a new tab" }).count(), 1, "top recommendation has a clearly labelled primary install action");
   assert.equal(await initial.getByText("How these results work", { exact: true }).count(), 1, "catalogue caveats are available in a collapsed disclosure");
-  assert.equal(await initial.getByRole("link", { name: "View llama3.2:3b on Ollama (opens in a new tab)" }).count(), 1, "native Ollama entries identify their registry source");
+  assert.equal(await initial.getByRole("link", { name: "View llama-3.2-3b.Q4_K_M.gguf on Hugging Face (opens in a new tab)" }).count(), 1, "Ollama-compatible entries identify their Hugging Face file source");
   await assertUnchangedBox(initial, ".card", () => initial.locator(".card").first().hover(), "hovering a recommendation card");
   await assertCardDisclosure(initial, "Installation guidance");
   await initial.locator(".card").first().getByText("Installation guidance", { exact: true }).click();
-  assert.equal(await initial.locator(".card").first().locator(".guide code").textContent(), "ollama pull llama3.2:3b && ollama run llama3.2:3b", "server-rendered native installation guidance uses the verified pull target");
+  const ollamaGuide = await initial.locator(".card").first().locator(".guide code").textContent();
+  assert.match(ollamaGuide ?? "", /ollama create local-model/);
+  assert.doesNotMatch(ollamaGuide ?? "", /ollama pull/);
   await assertCardDisclosure(initial, "Technical details and ranking factors");
   await assertNoAxeViolations(initial, "recommendation-card disclosures");
 

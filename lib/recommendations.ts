@@ -1,50 +1,4 @@
-export type MacConfig = {
-  chip: Chip;
-  memoryGb: number;
-  diskGb: number;
-  workload: "chat" | "coding" | "balanced";
-  /** Optional so existing URLs and API callers remain runtime-neutral. */
-  runtime?: Runtime;
-  /** Optional so existing URLs retain the established normal-context estimate. */
-  context?: ContextPreset;
-};
-
-export type Chip = keyof typeof chipProfiles;
-export type Runtime = "ollama" | "lmStudio" | "llamaCpp" | "mlx";
-export type ContextPreset = "small" | "normal" | "long";
-export type ConfigField = "chip" | "memoryGb" | "diskGb" | "workload" | "runtime" | "context";
-export type ConfigFieldErrors = Partial<Record<ConfigField, string>>;
-
-type ChipProfile = {
-  name: string;
-  memoryOptionsGb: readonly number[];
-  bandwidthGbps: number;
-};
-
-// Bandwidth is Apple's published family-level maximum. It is a comparative input,
-// not a promise for a particular GPU-core bin or Mac chassis.
-export const chipProfiles = {
-  m1: { name: "M1", memoryOptionsGb: [8, 16], bandwidthGbps: 68 },
-  m1Pro: { name: "M1 Pro", memoryOptionsGb: [16, 32], bandwidthGbps: 200 },
-  m1Max: { name: "M1 Max", memoryOptionsGb: [32, 64], bandwidthGbps: 400 },
-  m1Ultra: { name: "M1 Ultra", memoryOptionsGb: [64, 128], bandwidthGbps: 800 },
-  m2: { name: "M2", memoryOptionsGb: [8, 16, 24], bandwidthGbps: 100 },
-  m2Pro: { name: "M2 Pro", memoryOptionsGb: [16, 32], bandwidthGbps: 200 },
-  m2Max: { name: "M2 Max", memoryOptionsGb: [32, 64, 96], bandwidthGbps: 400 },
-  m2Ultra: { name: "M2 Ultra", memoryOptionsGb: [64, 128, 192], bandwidthGbps: 800 },
-  m3: { name: "M3", memoryOptionsGb: [8, 16, 24], bandwidthGbps: 100 },
-  m3Pro: { name: "M3 Pro", memoryOptionsGb: [18, 36], bandwidthGbps: 150 },
-  m3Max: { name: "M3 Max", memoryOptionsGb: [36, 48, 64, 96, 128], bandwidthGbps: 400 },
-  m3Ultra: { name: "M3 Ultra", memoryOptionsGb: [96, 256, 512], bandwidthGbps: 800 },
-  m4: { name: "M4", memoryOptionsGb: [16, 24, 32], bandwidthGbps: 120 },
-  m4Pro: { name: "M4 Pro", memoryOptionsGb: [24, 48, 64], bandwidthGbps: 273 },
-  m4Max: { name: "M4 Max", memoryOptionsGb: [36, 48, 64, 128], bandwidthGbps: 546 },
-  m5: { name: "M5", memoryOptionsGb: [16, 24, 32], bandwidthGbps: 153 },
-  m5Pro: { name: "M5 Pro", memoryOptionsGb: [24, 48, 64], bandwidthGbps: 307 },
-  m5Max: { name: "M5 Max", memoryOptionsGb: [36, 48, 64, 128], bandwidthGbps: 614 },
-} as const satisfies Record<string, ChipProfile>;
-
-export const chips = Object.entries(chipProfiles).map(([id, profile]) => ({ id: id as Chip, ...profile }));
+import { chipProfiles, type ChipProfile, type ContextPreset, type MacConfig, type Runtime } from "./hardware";
 
 export type Artifact = {
   id: string;
@@ -65,8 +19,6 @@ export type Artifact = {
   sourceUrl: string;
   repositoryUrl: string;
   filename?: string;
-  /** Native Ollama registry target. Present only for verified Ollama entries. */
-  pullName?: string;
 };
 
 export type Recommendation = Artifact & {
@@ -98,31 +50,11 @@ export type ExclusionReason = "insufficientDisk" | "insufficientMemory" | "inval
 export type ExclusionSummary = Record<ExclusionReason, number>;
 export type RankingResult = { recommendations: Recommendation[]; exclusions: ExclusionSummary };
 
-const workloads = ["chat", "coding", "balanced"] as const;
-/** Preferred display order for runtime choices and compatible-runtime guidance. */
-export const runtimes: readonly Runtime[] = ["llamaCpp", "mlx", "lmStudio", "ollama"];
-export const contextPresets: readonly ContextPreset[] = ["small", "normal", "long"];
 const runtimeNames: Record<Runtime, Recommendation["runtimes"][number]> = { ollama: "Ollama", lmStudio: "LM Studio", llamaCpp: "llama.cpp", mlx: "MLX" };
 const contextOverheadGb: Record<ContextPreset, number> = { small: 0.8, normal: 1.4, long: 3.2 };
 const contextLabels: Record<ContextPreset, string> = { small: "Small", normal: "Normal", long: "Long" };
 
-export function validateConfig(value: unknown): { valid: true; data: MacConfig } | { valid: false; errors: string[]; fieldErrors: ConfigFieldErrors } {
-  const v = value as Partial<MacConfig>;
-  const errors: string[] = [];
-  const fieldErrors: ConfigFieldErrors = {};
-  const profile = v && typeof v.chip === "string" ? chipProfiles[v.chip as Chip] : undefined;
-  if (!profile) fieldErrors.chip = "Choose a supported Apple chip.";
-  if (!(profile?.memoryOptionsGb as readonly number[] | undefined)?.includes(v?.memoryGb ?? Number.NaN)) fieldErrors.memoryGb = "Choose a memory configuration supported by that chip.";
-  if (!Number.isFinite(v?.diskGb) || (v.diskGb ?? 0) < 1 || (v.diskGb ?? 0) > 4000) fieldErrors.diskGb = "Free disk space must be between 1 and 4,000 GB.";
-  if (!workloads.includes(v?.workload as typeof workloads[number])) fieldErrors.workload = "Choose a workload.";
-  if (v?.runtime !== undefined && !runtimes.includes(v.runtime as Runtime)) fieldErrors.runtime = "Choose a supported runtime.";
-  if (v?.context !== undefined && !contextPresets.includes(v.context as ContextPreset)) fieldErrors.context = "Choose a context preset.";
-  errors.push(...Object.values(fieldErrors));
-  return errors.length ? { valid: false, errors, fieldErrors } : { valid: true, data: v as MacConfig };
-}
-
 export function runtimeEligibility(config: MacConfig, artifact: Artifact): Recommendation["runtimes"] {
-  if (artifact.pullName) return ["Ollama"];
   if (artifact.format === "mlx") return ["MLX"];
   return ["llama.cpp", "LM Studio", "Ollama"];
 }
@@ -216,7 +148,6 @@ export function buildGuidance(item: Artifact, runtimes: Recommendation["runtimes
   const artifact = item.filename ? `${item.modelId}/${item.filename}` : item.modelId;
   const filename = item.filename ?? "model.gguf";
   return runtimes.map((runtime) => {
-    if (runtime === "Ollama" && item.pullName) return { runtime, command: `ollama pull ${item.pullName} && ollama run ${item.pullName}` };
     if (runtime === "Ollama") return { runtime, command: `curl -L ${shellQuote(item.sourceUrl)} -o ${shellQuote(filename)} && printf '%s\\n' ${shellQuote(`FROM ./${filename}`)} > Modelfile && ollama create local-model -f Modelfile && ollama run local-model` };
     if (runtime === "LM Studio") return { runtime, command: `lms get ${shellQuote(artifact)}  # or open the exact file link in LM Studio${q}` };
     if (runtime === "llama.cpp") return { runtime, command: `llama-cli -hf ${shellQuote(artifact)} -p "Hello"` };

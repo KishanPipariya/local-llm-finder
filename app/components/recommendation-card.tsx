@@ -5,8 +5,8 @@ const formatBytes = (bytes: number) => new Intl.NumberFormat("en", { maximumFrac
 
 export function RecommendationCard({ model, isTopPick = false }: { model: Recommendation; isTopPick?: boolean }) {
   const headingId = `model-${model.id.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-${model.format}`;
-  const source = model.pullName ? "Ollama" : "Hugging Face";
-  const sourceItem = model.pullName ?? model.filename ?? model.title;
+  const source = "Hugging Face";
+  const sourceItem = model.filename ?? model.title;
   const primaryRuntime = model.guidance[0]?.runtime ?? model.runtimes[0];
   return <article className={`card${isTopPick ? " top-pick" : ""}`} aria-labelledby={headingId}>
     <div className="card-top">{isTopPick ? <span className="top-pick-label">Top pick</span> : <span className={`status ${model.performance.toLowerCase().replace(" ", "-")}`}><span className="visually-hidden">Memory fit: </span>{model.performance}</span>}<span><abbr title={model.format === "gguf" ? "GPT-Generated Unified Format" : "Machine Learning eXchange"}>{model.format.toUpperCase()}</abbr>{model.quantization ? ` · ${model.quantization}` : ""}</span></div>

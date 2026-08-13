@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildGuidance, chipProfiles, estimateMemoryGb, rankArtifacts, rankArtifactsWithExplanations, runtimeEligibility, runtimes, validateConfig, type Artifact, type MacConfig } from "../lib/recommendations";
+import { buildGuidance, estimateMemoryGb, rankArtifacts, rankArtifactsWithExplanations, runtimeEligibility, type Artifact } from "../lib/recommendations";
+import { chipProfiles, runtimes, validateConfig, type MacConfig } from "../lib/hardware";
 import { CatalogueCache, isFresh } from "../lib/catalogue-cache";
 import { normalizationExclusions, normalizeModels, REFRESH_TIMEOUT_MS, retrieveCatalogue } from "../lib/catalogue";
 import { createPostHandler } from "../app/api/recommendations/route";
@@ -8,7 +9,6 @@ import { createPostHandler } from "../app/api/recommendations/route";
 const mac: MacConfig = { chip: "m4", memoryGb: 16, diskGb: 12, workload: "coding" };
 const gguf: Artifact = { id: "org/Coder-7B-GGUF/model.Q4_K_M.gguf", modelId: "org/Coder-7B-GGUF", title: "Coder 7B", format: "gguf", sizeBytes: 5_000_000_000, sizeGb: 5, paramsB: 7, downloads: 3000, updatedAt: "2026-08-01T00:00:00Z", gated: false, tags: ["code"], repositoryUrl: "https://huggingface.co/org/Coder-7B-GGUF", sourceUrl: "https://huggingface.co/org/Coder-7B-GGUF/resolve/main/model.Q4_K_M.gguf", filename: "model.Q4_K_M.gguf" };
 const mlx: Artifact = { ...gguf, id: "mlx-community/Coder-7B-4bit", modelId: "mlx-community/Coder-7B-4bit", format: "mlx", sizeBytes: 4_500_000_000, sizeGb: 4.5, filename: undefined };
-const nativeOllama: Artifact = { ...gguf, id: "ollama/qwen3:4b", modelId: "qwen3:4b", title: "Qwen3 4B", sizeBytes: 3_000_000_000, sizeGb: 3, paramsB: 4, sourceUrl: "https://ollama.com/library/qwen3:4b", repositoryUrl: "https://ollama.com/library/qwen3:4b", filename: undefined, pullName: "qwen3:4b" };
 
 test("accepts every chip's supported memory options and rejects impossible pairs", () => {
   for (const [chip, profile] of Object.entries(chipProfiles)) {
@@ -28,11 +28,11 @@ test("returns typed field errors while preserving the API error list", () => {
     assert.deepEqual(invalid.errors, Object.values(invalid.fieldErrors));
   }
 });
-test("makes Apple Silicon runtimes available in preferred display order", () => { assert.deepEqual(runtimes, ["llamaCpp", "mlx", "lmStudio", "ollama"]); assert.deepEqual(runtimeEligibility(mac, mlx), ["MLX"]); assert.deepEqual(runtimeEligibility(mac, gguf), ["llama.cpp", "LM Studio", "Ollama"]); assert.deepEqual(runtimeEligibility(mac, nativeOllama), ["Ollama"]); });
+test("makes Apple Silicon runtimes available in preferred display order", () => { assert.deepEqual(runtimes, ["llamaCpp", "mlx", "lmStudio", "ollama"]); assert.deepEqual(runtimeEligibility(mac, mlx), ["MLX"]); assert.deepEqual(runtimeEligibility(mac, gguf), ["llama.cpp", "LM Studio", "Ollama"]); });
 test("filters artifacts to a chosen runtime while requests without a runtime remain neutral", () => {
   assert.deepEqual(rankArtifacts([gguf, mlx], { ...mac, runtime: "mlx" }).map((item) => item.format), ["mlx"]);
-  assert.deepEqual(rankArtifacts([gguf, mlx, nativeOllama], { ...mac, runtime: "ollama" }).map((item) => item.format), ["gguf", "gguf"]);
-  assert.deepEqual(rankArtifacts([gguf, mlx, nativeOllama], mac).map((item) => item.format).sort(), ["gguf", "gguf", "mlx"]);
+  assert.deepEqual(rankArtifacts([gguf, mlx], { ...mac, runtime: "ollama" }).map((item) => item.format), ["gguf"]);
+  assert.deepEqual(rankArtifacts([gguf, mlx], mac).map((item) => item.format).sort(), ["gguf", "mlx"]);
   assert.equal(rankArtifacts([gguf], { ...mac, runtime: "ollama" })[0].guidance.length, 1);
 });
 test("context presets increase conservative memory use and can exclude a former fit", () => {
@@ -73,11 +73,12 @@ test("keeps fit tied to memory but changes pace and ranking by chip bandwidth", 
   assert.equal(highBandwidth[0].title, "Chat 8B");
 });
 test("names the exact GGUF file in links and runtime guidance", () => { const recommendation = rankArtifacts([gguf], mac)[0]; assert.equal(recommendation.sourceUrl, gguf.sourceUrl); assert.match(recommendation.guidance.find((guide) => guide.runtime === "llama.cpp")!.command, /model\.Q4_K_M\.gguf/); });
-test("uses native pull-and-run guidance only for verified Ollama entries", () => {
-  assert.deepEqual(buildGuidance(nativeOllama, ["Ollama"]), [{ runtime: "Ollama", command: "ollama pull qwen3:4b && ollama run qwen3:4b" }]);
-  assert.match(buildGuidance(gguf, ["Ollama"])[0].command, /ollama create local-model/);
-  assert.doesNotMatch(buildGuidance(gguf, ["Ollama"])[0].command, /ollama pull/);
-  assert.deepEqual(rankArtifacts([nativeOllama], { ...mac, runtime: "lmStudio" }), []);
+test("uses Hugging Face GGUF import guidance for Ollama", () => {
+  const guidance = buildGuidance(gguf, ["Ollama"])[0].command;
+  assert.ok(guidance.includes(gguf.sourceUrl));
+  assert.match(guidance, /ollama create local-model/);
+  assert.match(guidance, /ollama run local-model/);
+  assert.doesNotMatch(guidance, /ollama pull/);
 });
 test("returns typed fit explanations and actionable exclusion categories", () => {
   const tooLarge = { ...gguf, id: "org/Large-GGUF/file.gguf", modelId: "org/Large-GGUF", sizeBytes: 13_000_000_000, sizeGb: 13 };
@@ -144,6 +145,22 @@ test("cache coalesces cold refreshes and rejects invalid timestamps", async () =
   release();
   assert.equal((await first).stale, false); assert.equal((await second).stale, false);
   assert.equal(isFresh({ items: [], refreshedAt: "not-a-date" }), false);
+});
+
+test("cold and completed refreshes mark already-expired catalogues stale", async () => {
+  const now = Date.parse("2026-08-02T00:00:00Z");
+  const expiredCatalogue = { items: [gguf], refreshedAt: "2026-08-01T00:00:00Z" };
+  const cold = new CatalogueCache(async () => expiredCatalogue, 1, () => now);
+  assert.deepEqual(await cold.get(), { catalogue: expiredCatalogue, stale: true });
+
+  let release!: (catalogue: typeof expiredCatalogue) => void;
+  const pending = new Promise<typeof expiredCatalogue>((resolve) => { release = resolve; });
+  const refreshed = new CatalogueCache(async () => pending, 1, () => now);
+  (refreshed as unknown as { state: typeof expiredCatalogue }).state = expiredCatalogue;
+  assert.deepEqual(await refreshed.get(), { catalogue: expiredCatalogue, stale: true });
+  release(expiredCatalogue);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(await refreshed.get(), { catalogue: expiredCatalogue, stale: true });
 });
 
 test("expired cache responds stale immediately, shares one background refresh, and adopts its result", async () => {

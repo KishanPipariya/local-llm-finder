@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createPostHandler } from "../app/api/recommendations/route";
 import { parseFinderRequest } from "../lib/request";
-import { validateConfig, type MacConfig } from "../lib/recommendations";
+import { validateConfig, type MacConfig } from "../lib/hardware";
 import { mergeExclusions } from "../lib/recommendation-service";
 
 const valid: MacConfig = { chip: "m4", memoryGb: 16, diskGb: 80, workload: "balanced" };

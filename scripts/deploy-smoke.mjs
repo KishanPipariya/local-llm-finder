@@ -52,11 +52,11 @@ function verifyResult(body, runtime) {
   for (const recommendation of body.recommendations) {
     assert(recommendation !== null && typeof recommendation === "object", `${runtime}: API returned an invalid recommendation.`);
     assert(Array.isArray(recommendation.runtimes) && recommendation.runtimes.includes(runtimeLabel), `${runtime}: API returned a recommendation incompatible with ${runtimeLabel}.`);
-    const expectedSource = runtime === "ollama" ? "https://ollama.com/library/" : "https://huggingface.co/";
-    assert(typeof recommendation.sourceUrl === "string" && recommendation.sourceUrl.startsWith(expectedSource), `${runtime}: API recommendation is missing its expected source URL.`);
+    assert(typeof recommendation.sourceUrl === "string" && recommendation.sourceUrl.startsWith("https://huggingface.co/"), `${runtime}: API recommendation is missing its Hugging Face source URL.`);
     if (runtime === "ollama") {
-      assert(typeof recommendation.pullName === "string" && recommendation.pullName.length > 0, "ollama: API recommendation is missing its native pull target.");
-      assert(recommendation.guidance?.some((guide) => guide.runtime === "Ollama" && guide.command === `ollama pull ${recommendation.pullName} && ollama run ${recommendation.pullName}`), "ollama: API recommendation is missing its verified native pull command.");
+      const ollamaGuidance = recommendation.guidance?.find((guide) => guide.runtime === "Ollama")?.command;
+      assert(typeof ollamaGuidance === "string" && ollamaGuidance.includes("ollama create") && ollamaGuidance.includes("ollama run"), "ollama: API recommendation is missing its GGUF import recipe.");
+      assert(!ollamaGuidance.includes("ollama pull"), "ollama: API recommendation must not use a native pull path.");
     }
   }
 

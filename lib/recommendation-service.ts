@@ -1,5 +1,6 @@
 import { getCatalogue } from "./catalogue";
-import { rankArtifactsWithExplanations, type ExclusionSummary, type MacConfig, type Recommendation } from "./recommendations";
+import { rankArtifactsWithExplanations, type ExclusionSummary, type Recommendation } from "./recommendations";
+import type { MacConfig } from "./hardware";
 
 export type RecommendationResult = { recommendations: Recommendation[]; exclusions: ExclusionSummary; refreshedAt: string; stale: boolean };
 

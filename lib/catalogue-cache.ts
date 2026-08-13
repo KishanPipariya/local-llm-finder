@@ -23,7 +23,8 @@ export class CatalogueCache {
       return { catalogue: this.state, stale: true };
     }
 
-    return { catalogue: await this.startRefresh(), stale: false };
+    const catalogue = await this.startRefresh();
+    return { catalogue, stale: !isFresh(catalogue, this.clock(), this.maxAge) };
   }
 
   private startRefresh(): Promise<Catalogue> {

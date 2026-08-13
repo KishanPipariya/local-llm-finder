@@ -57,15 +57,17 @@ emits `ollama pull` for an arbitrary Hugging Face file.
 ## Catalogue refresh and fallback
 
 The complete server-side catalogue refresh is shared through Next.js's
-24-hour persistent cache, so source data can be up to a day old. Each process
+six-hour persistent cache, so source data can be up to six hours old. Each process
 also keeps its own six-hour `CatalogueCache`: it coalesces requests, serves the
-last valid result as stale during a refresh or outage, and waits five minutes
-before retrying a failed refresh. If neither cache has a valid catalogue, the
-GET flow shows its temporary error and the API returns `503`.
+last valid result as stale during a refresh or outage, marks an already-expired
+refresh result as stale, and waits five minutes before retrying a failed refresh.
+If neither cache has a valid catalogue, the GET flow shows its temporary error
+and the API returns `503`.
 
 Each shared refresh uses two Hugging Face `full=true` list responses (popular
-GGUF repositories and `mlx-community`) and normalizes their file metadata
-directly—there are no per-repository or non-Hugging-Face catalogue requests.
+GGUF repositories and `mlx-community`), then requests each selected
+repository's `blobs=true` metadata before normalizing it. There are no
+non-Hugging-Face catalogue requests.
 
 ## Run locally
 

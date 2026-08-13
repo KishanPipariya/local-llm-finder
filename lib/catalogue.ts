@@ -209,38 +209,11 @@ export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeo
   }
 }
 
-// This is intentionally reachable only from the child process spawned by the
-// browser suite. It keeps the progressive-enhancement check offline and does
-// not create a public endpoint or persist any configuration.
-const browserTestCatalogue: Catalogue = {
-  items: [{
-    id: "ollama/llama3.2:3b",
-    modelId: "llama3.2:3b",
-    title: "Llama 3.2 3B",
-    format: "gguf",
-    sizeBytes: 2_000_000_000,
-    sizeGb: 2,
-    paramsB: 3,
-    downloads: 0,
-    updatedAt: "2026-08-01T00:00:00Z",
-    gated: false,
-    tags: ["instruct", "chat"],
-    pipelineTag: "text-generation",
-    repositoryUrl: "https://ollama.com/library/llama3.2:3b",
-    sourceUrl: "https://ollama.com/library/llama3.2:3b",
-    pullName: "llama3.2:3b",
-  }],
-  refreshedAt: "2026-08-01T00:00:00Z",
-};
-
 const persistentCatalogueRefresh = unstable_cache(
   retrieveCatalogue,
   ["mac-local-llm-finder", "catalogue-refresh", "v1"],
-  { revalidate: 24 * 60 * 60 },
+  { revalidate: 6 * 60 * 60 },
 );
 
-// Keep the fixture isolated from the persistent production cache so browser
-// tests remain fully offline. The outer cache retains process-local stale
-// responses and retry backoff when the shared refresh is unavailable.
-const cache = new CatalogueCache(process.env.MAC_LLM_BROWSER_TEST_FIXTURE === "1" ? async () => browserTestCatalogue : persistentCatalogueRefresh);
+const cache = new CatalogueCache(persistentCatalogueRefresh);
 export const getCatalogue = () => cache.get();

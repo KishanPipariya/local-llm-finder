@@ -87,13 +87,13 @@ and long links and disclosure summaries wrap rather than overflow.
 | `app/components/hardware-selector.tsx` | Chip-valid memory selector and accessible automatic-adjustment announcement. |
 | `app/components/results.tsx` | Results heading, submitted setup summary/edit link, top-pick and alternatives grouping, no-results recovery, catalogue disclosure, and actionable exclusion disclosure. |
 | `app/components/results-header.tsx` | Timestamp, stale-status, and shortlist heading presentation. |
-| `app/components/recommendation-card.tsx` | Recommendation fit explanation, metric hierarchy, source-aware Ollama/Hugging Face link, licence and gated-model notices, and initially collapsed installation and technical/ranking disclosures. |
+| `app/components/recommendation-card.tsx` | Recommendation fit explanation, metric hierarchy, Hugging Face source link, licence and gated-model notices, and initially collapsed installation and technical/ranking disclosures. |
 | `app/components/recommendation-metrics.tsx` | Reusable download, memory, pace, and setup-check card section. |
 | `app/api/recommendations/route.ts` | Node.js POST JSON endpoint; exposes `createPostHandler` for testing. |
 | `lib/request.ts` | Typed GET-query parsing and shared request-level catalogue-unavailable message. |
 | `lib/hardware.ts` | Typed Apple Silicon profiles and configuration validation used by request boundaries and interactive hardware controls. |
 | `lib/recommendation-request.ts` | Typed POST request boundary that maps shared validation and catalogue failures to the API contract. |
-| `lib/recommendations.ts` | Pure validation, memory and pace estimates, eligibility, scoring, ranking, and guidance. |
+| `lib/recommendations.ts` | Pure memory and pace estimates, eligibility, scoring, ranking, and runtime guidance. |
 | `lib/recommendation-service.ts` | Composition layer joining catalogue retrieval to ranking and safely merging typed exclusion counts. |
 | `lib/catalogue.ts` | Stable retrieval facade: server-side Hugging Face retrieval, normalization, and persistent cache composition. |
 | `lib/catalogue-request.ts` | Shared upstream timeout, JSON request, and bounded-concurrency helpers. |
@@ -114,7 +114,7 @@ and long links and disclosure summaries wrap rather than overflow.
 
 ### Configuration validation
 
-`validateConfig` requires four values and accepts two optional preferences:
+`lib/hardware.ts` is the sole owner of chip profiles, runtime/context types, and `validateConfig`. Validation requires four values and accepts two optional preferences:
 
 - `chip`: a key in `chipProfiles`.
 - `memoryGb`: one of that chip's published unified-memory options.
@@ -204,8 +204,8 @@ a 12-second timeout, while a complete refresh has a 30-second deadline that
 aborts all outstanding work. An empty usable catalogue fails the full refresh.
 
 Next.js `unstable_cache` wraps the complete production refresh under a stable
-key with a 24-hour revalidation interval, sharing the full upstream crawl across
-requests, instances, and deployments. Results may therefore be up to a day old.
+key with a six-hour revalidation interval, sharing the full upstream crawl across
+requests, instances, and deployments. Results may therefore be up to six hours old.
 `CatalogueCache` holds the last valid normalized catalogue in each process for
 six hours. A cold local cache blocks only for the shared refresh budget; without
 a successful catalogue, the error is propagated. Once a catalogue has expired,
@@ -214,7 +214,9 @@ shared background refresh runs. A successful background refresh replaces the
 cache and clears the retry backoff. A failed refresh is consumed internally,
 keeps the prior catalogue stale, and waits five minutes before the next refresh
 attempt, avoiding repeated upstream calls during an outage.
-If no valid catalogue has ever been acquired, the error is propagated:
+If a cold or completed refresh yields a catalogue already older than six hours,
+it is returned with `stale: true`; freshness never claims that an old catalogue
+is current. If no valid catalogue has ever been acquired, the error is propagated:
 
 | Entry point | Invalid configuration | No catalogue available |
 | --- | --- | --- |
@@ -250,11 +252,12 @@ hooks are the project's verification gate.
 `npm test` includes
 both the Node test suite and the Playwright/axe accessibility suite; the latter
 builds the app, allocates an ephemeral localhost port, and starts a local
-production Next.js server. That spawned browser-test process alone receives an
-in-memory catalogue fixture; the fixture has no public endpoint or persistence
-and lets the no-JavaScript flow assert successful server-rendered results
-without calling the external catalogue. Cleanup explicitly terminates and waits
-for the production server.
+production Next.js server. That child process imports a test-only Node fetch
+mock that returns Hugging Face list and per-repository blob-metadata responses,
+so browser checks exercise the production retrieval and normalization path
+without external network access. Production code has no fixture switch or
+catalogue environment variable. Cleanup explicitly terminates and waits for the
+production server.
 
 `npm run test:unit` uses Node's built-in experimental test coverage report for
 the exercised server and domain modules. It enforces the current baseline of
@@ -288,8 +291,8 @@ Root metadata uses `https://local-llm-finder-m7qb.vercel.app/` as its canonical
 and Open Graph URL and declares a large-image Twitter card. Next serves the
 branded, code-generated `/opengraph-image` and `/icon` metadata routes using
 the same cream, navy, and blue visual language as the finder. The README's
-`docs/images/recommended-results.png` is captured from the fixture-backed
-production server, not from a live catalogue. See
+`docs/images/recommended-results.png` is captured from the fetch-mocked
+production retrieval path, not from a live catalogue. See
 [`docs/showcase-checklist.md`](docs/showcase-checklist.md) before a demo or
 recording.
 
