@@ -16,15 +16,15 @@ const workloadLabels = { chat: "questions and writing", coding: "coding", balanc
 const contextLabels = { small: "short conversations", normal: "typical conversations", long: "long conversations" } as const;
 
 function editProfileHref(config: MacConfig) {
-  const completeConfig = { ...config, runtime: config.runtime ?? "ollama", context: config.context ?? "normal" };
+  const completeConfig = { ...config, runtime: config.runtime ?? "any", context: config.context ?? "normal" };
   const query = new URLSearchParams(Object.entries(completeConfig).map(([key, value]) => [key, String(value)]));
   return `/?${query.toString()}#finder`;
 }
 
 function SetupSummary({ config }: { config: MacConfig }) {
   const context = config.context ?? "normal";
-  const runtime = config.runtime ?? "ollama";
-  return <section className="setup-summary" aria-labelledby="setup-summary-title"><div><span className="eyebrow">Your setup</span><h3 id="setup-summary-title">{chipProfiles[config.chip].name} · {config.memoryGb} GB unified memory</h3><p>{config.diskGb} GB free disk · {workloadLabels[config.workload]} · {contextLabels[context]} · {runtimeLabels[runtime]}</p></div><a href={editProfileHref(config)}>Edit profile <span aria-hidden="true">→</span></a></section>;
+  const runtime = config.runtime ? runtimeLabels[config.runtime] : "Any compatible format";
+  return <section className="setup-summary" aria-labelledby="setup-summary-title"><div><span className="eyebrow">Your setup</span><h3 id="setup-summary-title">{chipProfiles[config.chip].name} · {config.memoryGb} GB unified memory</h3><p>{config.diskGb} GB free disk · {workloadLabels[config.workload]} · {contextLabels[context]} · {runtime}</p></div><a href={editProfileHref(config)}>Edit profile <span aria-hidden="true">→</span></a></section>;
 }
 
 export function Results({ result, config }: { result: RecommendationResult; config: MacConfig }) {

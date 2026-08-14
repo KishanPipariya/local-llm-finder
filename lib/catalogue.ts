@@ -235,6 +235,22 @@ export function normalizationExclusions(models: HubModel[], format: Artifact["fo
 
 export { mapWithConcurrency } from "./catalogue-request";
 
+export function interleaveUnique(lists: HubModel[][], limit: number): HubModel[] {
+  const selected: HubModel[] = [];
+  const seen = new Set<string>();
+  const maxLength = lists.reduce((maximum, list) => Math.max(maximum, list.length), 0);
+  for (let index = 0; selected.length < limit && index < maxLength; index += 1) {
+    for (const model of lists.map((list) => list[index]).filter((candidate): candidate is HubModel => candidate !== undefined)) {
+      if (!seen.has(model.id)) {
+        seen.add(model.id);
+        selected.push(model);
+        if (selected.length === limit) break;
+      }
+    }
+  }
+  return selected;
+}
+
 async function retrieveModelMetadata(model: HubModel, fetcher: FetchLike, refreshSignal: AbortSignal): Promise<HubModel | undefined> {
   try {
     return normalizeHubModel(await fetchJson(modelInfoUrl(model.id), fetcher, refreshSignal, "Hugging Face"));
@@ -253,11 +269,19 @@ export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeo
   const refreshController = new AbortController();
   const deadline = setTimeout(() => refreshController.abort(new Error("Hugging Face catalogue refresh timed out")), refreshTimeoutMs);
   try {
-    const base = `${HUB_BASE}?full=true&limit=20&sort=downloads&direction=-1`;
-    const [ggufList, mlxList] = await Promise.all([
-      fetchJson(`${base}&search=GGUF`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
-      fetchJson(`${base}&author=mlx-community`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
+    // A popularity-only sample hides newer repositories until they have
+    // accumulated enough downloads. Interleave popular and recently updated
+    // feeds while keeping the detail crawl bounded to twenty repositories per
+    // format.
+    const listBase = `${HUB_BASE}?full=true&limit=20&direction=-1`;
+    const [popularGguf, recentGguf, popularMlx, recentMlx] = await Promise.all([
+      fetchJson(`${listBase}&sort=downloads&search=GGUF`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
+      fetchJson(`${listBase}&sort=lastModified&search=GGUF`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
+      fetchJson(`${listBase}&sort=downloads&author=mlx-community`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
+      fetchJson(`${listBase}&sort=lastModified&author=mlx-community`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
     ]);
+    const ggufList = interleaveUnique([popularGguf, recentGguf], 20);
+    const mlxList = interleaveUnique([popularMlx, recentMlx], 20);
     // List responses contain filenames but no byte sizes. Fetch each selected
     // repository's blob metadata before normalizing, otherwise conservative size
     // validation would exclude every artifact. Both formats share one upstream

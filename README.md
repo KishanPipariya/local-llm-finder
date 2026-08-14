@@ -49,7 +49,7 @@ POST /api/recommendations ┘                                      └───�
 }
 ```
 
-A successful response returns the existing recommendation result object, including `recommendations`, `exclusions`, and `stale`. Invalid configurations return `400` with `errors` and `fieldErrors`; a catalogue outage with no cached result returns `503` with `error`.
+A successful response returns the existing recommendation result object, including `recommendations`, `exclusions`, and `stale`. Invalid configurations return `400` with `errors` and `fieldErrors`; a catalogue outage with no cached result returns `503` with `error`. JSON request bodies are bounded before parsing. The GET-only `runtime=any` choice represents the legacy runtime-neutral preference; the JSON API accepts only concrete runtime names.
 
 Hugging Face GGUF files use import-based Ollama guidance; the finder never
 emits `ollama pull` for an arbitrary Hugging Face file. Gated artifacts keep
@@ -66,8 +66,9 @@ refresh result as stale, and waits five minutes before retrying a failed refresh
 If neither cache has a valid catalogue, the GET flow shows its temporary error
 and the API returns `503`.
 
-Each shared refresh uses two Hugging Face `full=true` list responses (popular
-GGUF repositories and `mlx-community`), then requests each selected
+Each shared refresh uses four Hugging Face `full=true` list responses (20 popular
+and 20 recently updated GGUF repositories, plus the same two samples from
+`mlx-community`), then requests each selected
 repository's `blobs=true` metadata before normalizing it. There are no
 non-Hugging-Face catalogue requests. MLX sizes represent the complete snapshot
 download and are rejected when any repository file has an unknown size; imports

@@ -34,7 +34,7 @@ export type Recommendation = Artifact & {
   explanation: RecommendationExplanation;
 };
 
-export type WorkloadCategory = "coding-oriented" | "general chat" | "mixed";
+export type WorkloadCategory = "coding-oriented" | "general chat" | "mixed" | "unknown";
 export type RecommendationExplanation = {
   fit: {
     disk: { availableBytes: number; headroomBytes: number };
@@ -111,15 +111,22 @@ function recencyScore(updatedAt: string, now: number) {
 }
 
 function workloadCategory(item: Artifact): WorkloadCategory {
-  if (isCodingOriented(item)) return "coding-oriented";
-  if (isChatOriented(item)) return "general chat";
-  return "mixed";
+  const coding = isCodingOriented(item);
+  const chat = isChatOriented(item);
+  if (coding && chat) return "mixed";
+  if (coding) return "coding-oriented";
+  if (chat) return "general chat";
+  return "unknown";
 }
 
 function workloadRelevance(category: WorkloadCategory, workload: MacConfig["workload"]): string {
-  if (workload === "balanced") return category === "mixed" ? "A balanced metadata signal for chat and coding." : `Useful for a balanced shortlist; metadata suggests ${category}.`;
+  if (workload === "balanced") {
+    if (category === "mixed") return "Metadata suggests both chat and coding use.";
+    if (category === "unknown") return "No strong chat or coding signal was available in the metadata.";
+    return `Useful for a balanced shortlist; metadata suggests ${category}.`;
+  }
   if (workload === "coding") return category === "coding-oriented" ? "Metadata suggests coding-oriented use." : "Included as a general-purpose option; its metadata is not coding-oriented.";
-  return category === "coding-oriented" ? "Included for chat, though its metadata is coding-oriented." : "Metadata suggests general chat or mixed use.";
+  return category === "coding-oriented" ? "Included for chat, though its metadata is coding-oriented." : category === "unknown" ? "Included for chat; the metadata has no strong workload signal." : "Metadata suggests general chat or mixed use.";
 }
 
 function familyKey(item: Artifact) {
@@ -212,7 +219,18 @@ export function rankArtifactsWithExplanations(artifacts: Artifact[], config: Mac
     const key = variantKey(item);
     if (!grouped.has(key)) grouped.set(key, item);
   }
-  return { recommendations: [...grouped.values()].slice(0, 10), exclusions };
+  const ranked = [...grouped.values()];
+  const familySeen = new Set<string>();
+  const diverse: Recommendation[] = [];
+  const deferred: Recommendation[] = [];
+  for (const item of ranked) {
+    if (familySeen.has(item.explanation.familyKey)) deferred.push(item);
+    else {
+      familySeen.add(item.explanation.familyKey);
+      diverse.push(item);
+    }
+  }
+  return { recommendations: [...diverse, ...deferred].slice(0, 10), exclusions };
 }
 
 export function rankArtifacts(artifacts: Artifact[], config: MacConfig, now = Date.now()): Recommendation[] {

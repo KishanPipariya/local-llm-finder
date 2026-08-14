@@ -88,9 +88,9 @@ try {
   const initial = await waitForPage(context);
   await assertNoAxeViolations(initial, "initial finder");
   assert.equal(await initial.getByText("Ollama is the recommended default.", { exact: false }).count(), 1, "runtime helper gives beginners a recommended starting point");
-  assert.deepEqual(await initial.locator('input[name="runtime"]').evaluateAll((inputs) => inputs.map((input) => input.getAttribute("value"))), ["ollama", "lmStudio", "mlx", "llamaCpp"], "runtime choices put the beginner recommendation first");
+  assert.deepEqual(await initial.locator('input[name="runtime"]').evaluateAll((inputs) => inputs.map((input) => input.getAttribute("value"))), ["ollama", "lmStudio", "mlx", "llamaCpp", "any"], "runtime choices put the beginner recommendation first and expose the neutral option");
   assert.deepEqual(await initial.locator('input[name="context"]').evaluateAll((inputs) => inputs.map((input) => input.parentElement?.textContent?.trim())), ["Short · 4KA short conversation or one small file", "Normal · 16KChat and a few files · recommended", "Long · 32KLarge documents or repositories"], "context choices explain conversation size in plain language");
-  assert.equal(await initial.locator('.runtime small').count(), 4, "every runtime option includes a plain-language description");
+  assert.equal(await initial.locator('.runtime small').count(), 5, "every runtime option includes a plain-language description");
   const specsHelper = initial.locator(".specs-helper");
   const specsSummary = specsHelper.locator("summary");
   const specsBox = await specsSummary.boundingBox();
@@ -168,7 +168,7 @@ try {
   await initial.goto(`${origin}/?chip=m4&memoryGb=16&diskGb=12&workload=chat`, { waitUntil: "networkidle" });
   assert.equal(await initial.locator(".setup-summary").count(), 1, "results include a compact setup summary");
   assert.match(await initial.locator(".setup-summary").textContent() ?? "", /M4[\s\S]*16 GB unified memory[\s\S]*12 GB free disk/, "setup summary retains the submitted Mac details");
-  assert.equal(await initial.getByRole("link", { name: "Edit profile" }).getAttribute("href"), "/?chip=m4&memoryGb=16&diskGb=12&workload=chat&runtime=ollama&context=normal#finder", "edit profile preserves the full configuration in its GET URL");
+  assert.equal(await initial.getByRole("link", { name: "Edit profile" }).getAttribute("href"), "/?chip=m4&memoryGb=16&diskGb=12&workload=chat&runtime=any&context=normal#finder", "edit profile preserves the runtime-neutral configuration in its GET URL");
   assert.equal(await initial.locator(".card.top-pick").count(), 1, "the first ranked result is visually marked as the top pick");
   assert.equal(await initial.locator(".card").first().locator(".top-pick-label").textContent(), "Top pick");
   assert.equal(await initial.getByRole("link", { name: "Open Ollama model source: open llama-3.2-3b.Q4_K_M.gguf on Hugging Face in a new tab" }).count(), 1, "top recommendation has a clearly labelled model-source action");

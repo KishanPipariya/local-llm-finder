@@ -66,6 +66,16 @@ test("uses Hugging Face task metadata as a bounded workload preference", () => {
   assert.equal(rankArtifacts([unknown, coding, chat], { ...mac, workload: "chat" }, Date.parse("2026-08-06T00:00:00Z"))[0].id, chat.id);
   assert.equal(rankArtifacts([unknown], mac, Date.parse("2026-08-06T00:00:00Z")).length, 1, "unknown task metadata remains eligible");
 });
+test("explains combined and unknown workload metadata accurately", () => {
+  const unknown = { ...gguf, id: "org/Unknown-GGUF/file.gguf", modelId: "org/Unknown-GGUF", title: "Unknown", tags: [], pipelineTag: undefined };
+  const combined = { ...gguf, id: "org/Combined-GGUF/file.gguf", modelId: "org/Combined-GGUF", title: "Combined", tags: ["coding", "chat"], pipelineTag: undefined };
+  const unknownResult = rankArtifacts([unknown], { ...mac, workload: "balanced" })[0];
+  const combinedResult = rankArtifacts([combined], { ...mac, workload: "balanced" })[0];
+  assert.equal(unknownResult.explanation.fit.workload.category, "unknown");
+  assert.match(unknownResult.explanation.fit.workload.relevance, /no strong chat or coding signal/i);
+  assert.equal(combinedResult.explanation.fit.workload.category, "mixed");
+  assert.match(combinedResult.explanation.fit.workload.relevance, /both chat and coding/i);
+});
 test("keeps fit tied to memory but changes pace and ranking by chip bandwidth", () => {
   const compact: Artifact = { ...gguf, id: "org/Chat-3B-GGUF", modelId: "org/Chat-3B-GGUF", title: "Chat 3B", sizeBytes: 2_000_000_000, sizeGb: 2, paramsB: 3, tags: [] };
   const larger: Artifact = { ...gguf, id: "org/Chat-8B-GGUF", modelId: "org/Chat-8B-GGUF", title: "Chat 8B", sizeBytes: 6_000_000_000, sizeGb: 6, paramsB: 8, tags: [] };
@@ -181,6 +191,14 @@ test("keeps multiple GGUF quantization variants from one model family", () => {
   const ranked = rankArtifacts([q4, q8], mac);
   assert.deepEqual(ranked.map((item) => item.quantization).sort(), ["Q4_K_M", "Q8_0"]);
 });
+test("gives distinct model families priority over additional variants", () => {
+  const familyVariant = (id: string, quantization: string, sizeBytes: number) => ({ ...gguf, id, modelId: "org/Popular-7B-GGUF", title: "Popular 7B", quantization, filename: `${quantization}.gguf`, sizeBytes, sizeGb: sizeBytes / 1e9, downloads: 100_000, tags: [] });
+  const popularQ4 = familyVariant("org/Popular-7B-GGUF/Q4.gguf", "Q4", 4_000_000_000);
+  const popularQ8 = familyVariant("org/Popular-7B-GGUF/Q8.gguf", "Q8", 8_000_000_000);
+  const alternative = { ...gguf, id: "org/Alternative-7B-GGUF/Q4.gguf", modelId: "org/Alternative-7B-GGUF", title: "Alternative 7B", quantization: "Q4", filename: "Q4.gguf", downloads: 1, tags: [] };
+  const ranked = rankArtifacts([popularQ4, popularQ8, alternative], { ...mac, workload: "balanced" });
+  assert.deepEqual(ranked.slice(0, 2).map((item) => item.modelId), ["org/Popular-7B-GGUF", "org/Alternative-7B-GGUF"]);
+});
 test("does not infer model capacity from a download footprint and rewards maintained entries", () => {
   const typed = { ...gguf, id: "org/Typed-GGUF/model.gguf", modelId: "org/Typed-GGUF", title: "Typed 3B", paramsB: 3, sizeBytes: 3_000_000_000, sizeGb: 3, downloads: 100, tags: [], updatedAt: new Date().toISOString() };
   const untypedLarge = { ...gguf, id: "org/Untyped-GGUF/model.gguf", modelId: "org/Untyped-GGUF", title: "Untyped", paramsB: undefined, sizeBytes: 10_000_000_000, sizeGb: 10, downloads: 100, tags: [], updatedAt: new Date().toISOString() };
@@ -265,6 +283,15 @@ test("failed background refreshes stay stale and respect retry backoff", async (
   now += 60_000;
   assert.equal((await stale.get()).stale, true);
   assert.equal(staleCalls, 2);
+});
+test("failed cold refreshes respect retry backoff", async () => {
+  let calls = 0;
+  let now = 1000;
+  const cache = new CatalogueCache(async () => { calls += 1; throw new Error("offline"); }, 1, () => now, 60_000);
+  await assert.rejects(cache.get());
+  now += 1;
+  await assert.rejects(cache.get(), /backing off/);
+  assert.equal(calls, 1);
 });
 test("thirty-second cold-start deadline aborts requests and preserves the unavailable response", async () => {
   let requestAborted = false;

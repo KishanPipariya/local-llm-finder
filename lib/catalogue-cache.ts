@@ -23,6 +23,8 @@ export class CatalogueCache {
       return { catalogue: this.state, stale: true };
     }
 
+    if (now < this.retryAfter) throw new Error("Catalogue refresh is backing off after a failed attempt.");
+
     const catalogue = await this.startRefresh();
     return { catalogue, stale: !isFresh(catalogue, this.clock(), this.maxAge) };
   }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mapWithConcurrency, normalizationExclusions, normalizeModels, parseHubModelList, retrieveCatalogue } from "../lib/catalogue";
+import { interleaveUnique, mapWithConcurrency, normalizationExclusions, normalizeModels, parseHubModelList, retrieveCatalogue } from "../lib/catalogue";
 
 const listedModel = { id: "org/Model-GGUF", siblings: [{ rfilename: "model.Q4_K_M.gguf", size: 4_000_000_000 }] };
 const listedMlxModel = { id: "mlx-community/Model", siblings: [{ rfilename: "weights.safetensors", size: 4_000_000_000 }, { rfilename: "config.json", size: 1_000 }, { rfilename: "tokenizer.json", size: 1_000 }] };
@@ -160,6 +160,12 @@ test("bounded mapper preserves order and does not start workers for an empty lis
   assert.deepEqual(values, [2, 4, 6, 8]);
   assert.equal(peak, 2);
   assert.deepEqual(await mapWithConcurrency([], 2, async () => 1), []);
+});
+
+test("interleaves popular and recent feeds without duplicate repositories", () => {
+  const popular = [{ id: "org/Popular" }, { id: "org/Shared" }, { id: "org/Popular-2" }];
+  const recent = [{ id: "org/Recent" }, { id: "org/Shared" }];
+  assert.deepEqual(interleaveUnique([popular, recent], 4).map((model) => model.id), ["org/Popular", "org/Recent", "org/Shared", "org/Popular-2"]);
 });
 
 test("catalogue refresh rejects a failed list request", async () => {

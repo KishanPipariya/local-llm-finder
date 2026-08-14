@@ -17,7 +17,7 @@ Browser GET /?chip=…&memoryGb=…&diskGb=…&workload=…&runtime=…&context=
   -> server-rendered FinderForm and Results response, including typed fit explanations and exclusion counts
 
 Browser POST /api/recommendations (same configuration JSON)
-  -> app/api/recommendations/route.ts validates the body and uses the same catalogue-unavailable message
+  -> app/api/recommendations/route.ts bounds the JSON body, validates it, and uses the same catalogue-unavailable message
   -> the same recommendation service
   -> the same JSON result (including fit explanations and exclusion counts), 400 validation error, or 503 catalogue error
 ```
@@ -53,7 +53,8 @@ keyboard without client-side JavaScript.
 The server-rendered finder presentation groups configuration controls into
 Hardware, outcome/context, and Runtime sections. Context is described as how
 much text or code belongs in one conversation; Balanced, Normal context, and
-Ollama are explicitly marked as sensible first-time defaults. The hero repeats
+Ollama are explicitly marked as sensible first-time defaults. An explicit Any
+compatible format runtime option preserves runtime-neutral legacy links. The hero repeats
 the no-account, no-tracking, and no-saved-configuration promise beside the
 primary task. Results begin with a compact submitted-setup summary and an Edit
 profile GET link that preserves the complete configuration. They visually mark
@@ -122,10 +123,13 @@ and long links and disclosure summaries wrap rather than overflow.
 - `workload`: `chat`, `coding`, or `balanced`.
 - `runtime` (optional): `ollama`, `lmStudio`, `llamaCpp`, or `mlx`. When absent,
   ranking remains runtime-neutral for legacy API callers and URLs.
+- The finder exposes that neutral state as `runtime=any` in shareable GET links;
+  it is parsed as an omitted runtime preference and is not accepted by the JSON
+  API as a runtime value.
 - `context` (optional): `small` (4K tokens), `normal` (16K tokens), or `long`
   (32K tokens). When absent it uses the established conservative Normal
-  estimate. UI edit links serialize omitted preferences as the Ollama/Normal
-  defaults so a round trip preserves the visible profile.
+  estimate. UI edit links serialize omitted context as `normal` and omitted
+  runtime as `any`, so a round trip preserves the visible runtime-neutral profile.
 
 It returns both an ordered error list and typed field errors. Both GET and POST
 must use this function so they reject the same impossible Mac configurations,
@@ -191,7 +195,8 @@ The ranking score combines parameter metadata when available, workload fit, a
 qualitative pace factor, a small bounded update-recency signal, and download
 popularity. Download footprint is never treated as a parameter-count proxy.
 It keeps the highest-ranked representative of
-each normalized model-family/format/quantization variant and returns at most ten results. Every returned
+each normalized model-family/format/quantization variant, prioritizes one
+representative from each family before adding additional variants, and returns at most ten results. Every returned
 recommendation includes typed fit checks (disk and memory headroom, compatible
 runtimes, workload category, and pace inputs), ranking contributors, and its
 normalized family key. Hugging Face `pipeline_tag` is retained alongside titles
@@ -200,7 +205,7 @@ metadata add a bounded workload preference. Missing or unknown task metadata
 stays eligible and neutral; only an explicit known incompatible task is excluded.
 Numeric parameter metadata is normalized to billions whether the card supplies
 a small billions value or a large raw count. Workload metadata is presented only as
-coding-oriented, general chat, or mixed—not as a capability benchmark. Ranking
+coding-oriented, general chat, mixed, or unknown—not as a capability benchmark. Ranking
 accepts an optional clock value for deterministic callers and tests; normal
 requests use `Date.now()`. Equal scores use stable artifact identity fields as
 explicit tie-breakers, so an upstream list's order cannot change a shortlist.
@@ -231,8 +236,11 @@ workloads can change the result.
 
 ## Catalogue lifecycle
 
-`retrieveCatalogue` makes two server-side Hugging Face `full=true` list
-requests: popular GGUF repositories and repositories from `mlx-community`.
+`retrieveCatalogue` makes four server-side Hugging Face `full=true` list
+requests: 20 popular and 20 recently updated GGUF repositories, plus the same
+two 20-repository samples from `mlx-community`. The interleaved sample gives
+newer repositories a chance to enter the bounded detail crawl without making
+refresh latency unbounded.
 Because those list responses contain filenames but not reliable byte sizes, it
 then obtains each selected repository's `blobs=true` metadata with a bounded
 global concurrency of six in-flight requests across both formats. A repository that disappears or
@@ -256,7 +264,8 @@ callers immediately receive the prior catalogue with `stale: true` while one
 shared background refresh runs. A successful background refresh replaces the
 cache and clears the retry backoff. A failed refresh is consumed internally,
 keeps the prior catalogue stale, and waits five minutes before the next refresh
-attempt, avoiding repeated upstream calls during an outage.
+attempt, avoiding repeated upstream calls during an outage. Cold failures also
+honour the same backoff before returning another unavailable response.
 If a cold or completed refresh yields a catalogue already older than six hours,
 it is returned with `stale: true`; freshness never claims that an old catalogue
 is current. If no valid catalogue has ever been acquired, the error is propagated:
@@ -314,12 +323,12 @@ the command. Consequently, `npm run test:unit`,
 this coverage report. Browser-rendered pages and components are outside this
 unit-coverage scope.
 
-Use Node 24.x (`.nvmrc` is provided). The toolchain uses ESLint 10.8.0,
+Use Node 24.x (`.nvmrc` is provided). The toolchain uses ESLint 9.39.1,
 `eslint-config-next` 16.3.0, `tsx` 4.23.9, and TypeScript 7.0.2. TypeScript
 7 currently has no compiler API, so its official `@typescript/native` package
 supplies `tsc` while the `typescript` dependency aliases the TypeScript 6
 compatibility API required by Next and typescript-eslint. ESLint's official
-compatibility adapter keeps Next's configured rules working under ESLint 10.
+compatibility adapter keeps Next's configured rules working in flat config.
 
 When changing visible finder UI, also follow
 [`docs/accessibility-release-checklist.md`](docs/accessibility-release-checklist.md).

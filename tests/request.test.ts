@@ -54,6 +54,20 @@ test("POST treats malformed JSON and non-object JSON as validation errors", asyn
   }
 });
 
+test("GET treats the explicit runtime-neutral UI choice as an omitted preference", () => {
+  const parsed = parseFinderRequest({ chip: "m4", memoryGb: "16", diskGb: "80", workload: "balanced", runtime: "any" });
+  assert.deepEqual(parsed.candidate, { chip: "m4", memoryGb: 16, diskGb: 80, workload: "balanced" });
+  assert.deepEqual(parsed.validation, validateConfig(valid));
+});
+
+test("POST bounds request-body reads before validation", async () => {
+  let called = false;
+  const handler = createPostHandler(async () => { called = true; return {}; });
+  const response = await handler(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify({ ...valid, padding: "x".repeat(40_000) }) }));
+  assert.equal(response.status, 400);
+  assert.equal(called, false);
+});
+
 test("service merges only known typed catalogue exclusion reasons", () => {
   const ranking = { insufficientDisk: 1, insufficientMemory: 0, invalidSize: 0, unsupportedFormat: 2, unsupportedArtifact: 0 };
   assert.deepEqual(mergeExclusions(ranking, { insufficientMemory: 3, invalidSize: 1 }), { insufficientDisk: 1, insufficientMemory: 3, invalidSize: 1, unsupportedFormat: 2, unsupportedArtifact: 0 });

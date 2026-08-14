@@ -32,7 +32,10 @@ export function parseFinderRequest(params: FinderSearchParams) {
   };
   const runtime = value("runtime");
   const context = value("context");
-  if (runtime !== undefined) candidate.runtime = runtime;
+  // The UI uses `any` as an explicit, shareable representation of the
+  // established runtime-neutral legacy behaviour. It is not part of the API
+  // validation contract, which continues to accept only concrete runtimes.
+  if (runtime !== undefined && runtime !== "any") candidate.runtime = runtime;
   if (context !== undefined) candidate.context = context;
 
   return { submitted, candidate, validation: submitted ? validateConfig(candidate) : undefined };
