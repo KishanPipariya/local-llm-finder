@@ -21,7 +21,7 @@ export type HubModel = {
 };
 type UnknownRecord = Record<string, unknown>;
 
-function params(value: unknown, text: string): number | undefined {
+function params(value: unknown): number | undefined {
   // Card metadata commonly uses either a small value in billions (7) or a raw
   // parameter count (7_000_000_000); normalize both to the paramsB unit.
   if (typeof value === "number" && Number.isFinite(value) && value > 0) return value >= 1_000_000 ? value / 1e9 : value;
@@ -29,53 +29,20 @@ function params(value: unknown, text: string): number | undefined {
     const match = String(candidate ?? "").match(/(\d+(?:\.\d+)?)\s*[bB](?:illion)?\b/);
     return match ? Number(match[1]) : undefined;
   };
-  return parseText(value) ?? parseText(text);
+  return parseText(value);
 }
 const titleOf = (id: string) => id.split("/").at(-1)?.replace(/-(GGUF|MLX)$/i, "") ?? id;
 const validSize = (size: unknown): size is number => typeof size === "number" && Number.isSafeInteger(size) && size >= MIN_ARTIFACT_BYTES;
 const knownFileSize = (size: unknown): size is number => typeof size === "number" && Number.isSafeInteger(size) && size > 0;
 const isMlxWeightFile = (file: HubFile) => /(?:^|\/)[^/]+\.safetensors$/i.test(file.rfilename) && knownFileSize(file.size);
 const supportedPipelineTags = new Set(["text-generation", "text2text-generation", "conversational"]);
-// Unknown tags remain eligible so newly introduced Hugging Face tasks do not
-// disappear silently. Explicitly recognized non-conversational tasks must not
-// be presented as local chat/coding models, however.
-const knownIncompatiblePipelineTags = new Set([
-  "audio-classification",
-  "audio-to-audio",
-  "automatic-speech-recognition",
-  "depth-estimation",
-  "document-question-answering",
-  "feature-extraction",
-  "fill-mask",
-  "image-classification",
-  "image-feature-extraction",
-  "image-segmentation",
-  "image-to-image",
-  "image-to-text",
-  "image-text-to-text",
-  "mask-generation",
-  "multiple-choice",
-  "ner",
-  "object-detection",
-  "question-answering",
-  "reinforcement-learning",
-  "sentence-similarity",
-  "summarization",
-  "table-question-answering",
-  "text-classification",
-  "text-to-speech",
-  "token-classification",
-  "translation",
-  "text-to-image",
-  "video-classification",
-  "visual-question-answering",
-  "voice-activity-detection",
-  "zero-shot-classification",
-  "zero-shot-image-classification",
-]);
 const isSupportedTask = (model: HubModel) => {
-  const task = model.pipeline_tag?.toLowerCase();
-  return !task || supportedPipelineTags.has(task) || !knownIncompatiblePipelineTags.has(task);
+  const task = model.pipeline_tag?.trim().toLowerCase();
+  // Missing task metadata is common for quantized repositories, so retain it
+  // as an unknown/neutral candidate. An explicit task must be one of the
+  // supported text-generation families; failing closed prevents newly added
+  // non-chat Hugging Face tasks from entering the local-chat catalogue.
+  return !task || supportedPipelineTags.has(task);
 };
 const isGgufShard = (file: HubFile) => /(?:^|[-_.])\d{5}-of-\d{5}\.gguf$/i.test(file.rfilename);
 const isGgufAuxiliary = (file: HubFile) => /(?:^|[._/-])(?:mmproj|imatrix|adapter|lora|tokenizer|vocab)(?:[._/-]|$)/i.test(file.rfilename);
@@ -171,6 +138,16 @@ function quantizationOf(filename: string) {
   return match?.[1]?.toUpperCase();
 }
 
+function plausibleParamsB(value: unknown, sizeBytes: number): number | undefined {
+  const candidate = params(value);
+  if (candidate === undefined) return undefined;
+  // A model cannot plausibly encode arbitrarily many parameters in a tiny
+  // artifact. This deliberately broad lower-bound check only uses metadata as
+  // a ranking signal when the file is at least 50 MB per reported billion
+  // parameters; otherwise the metadata is treated as unavailable.
+  return candidate <= Math.max(1, sizeBytes / 50_000_000) ? candidate : undefined;
+}
+
 export function normalizeModels(models: HubModel[], format: Artifact["format"]): Artifact[] {
   return models.flatMap((model) => {
     if (!isSupportedTask(model)) return [];
@@ -194,7 +171,7 @@ export function normalizeModels(models: HubModel[], format: Artifact["format"]):
         format,
         sizeBytes: artifactSize,
         sizeGb: Math.round((artifactSize / 1e9) * 10) / 10,
-        paramsB: params(model.cardData?.params, `${model.id} ${(model.tags ?? []).join(" ")}`),
+        paramsB: plausibleParamsB(model.cardData?.params, artifactSize),
         quantization: filename ? quantizationOf(filename) : undefined,
         downloads: model.downloads !== undefined && model.downloads >= 0 ? model.downloads : 0,
         updatedAt: typeof model.lastModified === "string" ? model.lastModified : new Date(0).toISOString(),

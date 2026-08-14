@@ -178,7 +178,7 @@ try {
   await assertCardDisclosure(initial, "Installation guidance");
   await initial.locator(".card").first().getByText("Installation guidance", { exact: true }).click();
   const ollamaGuide = await initial.locator(".card").first().locator(".guide").filter({ hasText: "Ollama" }).locator("code").textContent();
-  assert.match(ollamaGuide ?? "", /ollama create local-model/);
+  assert.match(ollamaGuide ?? "", /ollama create 'local-/);
   assert.doesNotMatch(ollamaGuide ?? "", /ollama pull/);
   await assertCardDisclosure(initial, "Technical details and ranking factors");
   await assertNoAxeViolations(initial, "recommendation-card disclosures");

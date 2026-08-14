@@ -51,6 +51,13 @@ test("context presets increase conservative memory use and can exclude a former 
   assert.equal(small.explanation.fit.memory.headroomGb, Math.round((16 - small.memoryGb) * 10) / 10);
   assert.equal(small.explanation.fit.context.preset, "small");
 });
+test("context presets continue to change estimates for large artifacts", () => {
+  const large = { ...gguf, sizeBytes: 40_000_000_000, sizeGb: 40, paramsB: undefined };
+  const small = estimateMemoryGb(large, "small");
+  const normal = estimateMemoryGb(large, "normal");
+  const long = estimateMemoryGb(large, "long");
+  assert.ok(small < normal && normal < long);
+});
 test("validates optional runtime and context preferences without requiring them for legacy callers", () => {
   assert.equal(validateConfig(mac).valid, true);
   assert.equal(validateConfig({ ...mac, runtime: "other" }).valid, false);
@@ -64,17 +71,19 @@ test("uses Hugging Face task metadata as a bounded workload preference", () => {
   const unknown = { ...gguf, id: "org/Unknown-GGUF/file.gguf", modelId: "org/Unknown-GGUF", title: "Plain model", tags: [], pipelineTag: undefined };
   assert.equal(rankArtifacts([unknown, chat, coding], { ...mac, workload: "coding" }, Date.parse("2026-08-06T00:00:00Z"))[0].id, coding.id);
   assert.equal(rankArtifacts([unknown, coding, chat], { ...mac, workload: "chat" }, Date.parse("2026-08-06T00:00:00Z"))[0].id, chat.id);
-  assert.equal(rankArtifacts([unknown], mac, Date.parse("2026-08-06T00:00:00Z")).length, 1, "unknown task metadata remains eligible");
+  assert.equal(rankArtifacts([unknown], mac, Date.parse("2026-08-06T00:00:00Z")).length, 1, "manually supplied artifacts without task metadata remain neutral");
 });
 test("explains combined and unknown workload metadata accurately", () => {
   const unknown = { ...gguf, id: "org/Unknown-GGUF/file.gguf", modelId: "org/Unknown-GGUF", title: "Unknown", tags: [], pipelineTag: undefined };
   const combined = { ...gguf, id: "org/Combined-GGUF/file.gguf", modelId: "org/Combined-GGUF", title: "Combined", tags: ["coding", "chat"], pipelineTag: undefined };
   const unknownResult = rankArtifacts([unknown], { ...mac, workload: "balanced" })[0];
   const combinedResult = rankArtifacts([combined], { ...mac, workload: "balanced" })[0];
+  const combinedCodingResult = rankArtifacts([combined], { ...mac, workload: "coding" })[0];
   assert.equal(unknownResult.explanation.fit.workload.category, "unknown");
   assert.match(unknownResult.explanation.fit.workload.relevance, /no strong chat or coding signal/i);
   assert.equal(combinedResult.explanation.fit.workload.category, "mixed");
   assert.match(combinedResult.explanation.fit.workload.relevance, /both chat and coding/i);
+  assert.match(combinedCodingResult.explanation.fit.workload.relevance, /both coding and chat/i);
 });
 test("keeps fit tied to memory but changes pace and ranking by chip bandwidth", () => {
   const compact: Artifact = { ...gguf, id: "org/Chat-3B-GGUF", modelId: "org/Chat-3B-GGUF", title: "Chat 3B", sizeBytes: 2_000_000_000, sizeGb: 2, paramsB: 3, tags: [] };
@@ -93,31 +102,34 @@ test("names the exact GGUF file in links and runtime guidance", () => {
   const recommendation = rankArtifacts([gguf], mac)[0];
   assert.equal(recommendation.sourceUrl, gguf.sourceUrl);
   const llama = recommendation.guidance.find((guide) => guide.runtime === "llama.cpp")!.command;
-  assert.match(llama, /--hf-repo 'org\/Coder-7B-GGUF' --hf-file 'model\.Q4_K_M\.gguf'/);
-  assert.doesNotMatch(llama, /-hf 'org\/Coder-7B-GGUF\/model\.Q4_K_M\.gguf'/);
+  assert.match(llama, /curl --fail --location --create-dirs 'https:\/\/huggingface\.co\/org\/Coder-7B-GGUF\/resolve\/main\/model\.Q4_K_M\.gguf'/);
+  assert.match(llama, /--output \"\$workdir\/\"'model\.Q4_K_M\.gguf'/);
+  assert.doesNotMatch(llama, /--hf-repo/);
 });
 
 test("shell-quotes catalogue filenames and keeps nested paths usable", () => {
   const hostile = { ...gguf, filename: "nested/a'; printf INJECTED; 'b.gguf", sourceUrl: "https://huggingface.co/org/Coder-7B-GGUF/resolve/main/nested/a%27%3B%20printf%20INJECTED%3B%20%27b.gguf" };
   for (const runtime of ["Ollama", "LM Studio"] as const) {
     const command = buildGuidance(hostile, [runtime])[0].command;
-    assert.match(command, /--fail --location --create-dirs/);
+    assert.match(command, /curl --fail --location --create-dirs/);
     assert.match(command, /a'\"'\"'; printf INJECTED; '\"'\"'b\.gguf/);
+    assert.match(command, /mktemp -d/);
+    assert.match(command, /trap 'rm -rf \"\$workdir\"' EXIT/);
     assert.equal(spawnSync("sh", ["-n", "-c", command]).status, 0, `${runtime} guidance remains valid shell syntax`);
   }
 });
 test("uses Hugging Face GGUF import guidance for Ollama", () => {
   const guidance = buildGuidance(gguf, ["Ollama"])[0].command;
   assert.ok(guidance.includes(gguf.sourceUrl));
-  assert.match(guidance, /ollama create local-model/);
-  assert.match(guidance, /ollama run local-model/);
+  assert.match(guidance, /ollama create 'local-/);
+  assert.match(guidance, /ollama run 'local-/);
   assert.doesNotMatch(guidance, /ollama pull/);
+  assert.doesNotMatch(guidance, /> Modelfile/);
 });
 test("uses exact-file LM Studio and mlx-lm installation guidance", () => {
   const lmStudio = buildGuidance(gguf, ["LM Studio"])[0].command;
-  assert.ok(lmStudio.includes(gguf.sourceUrl));
   assert.match(lmStudio, /curl --fail --location --create-dirs/);
-  assert.match(lmStudio, /lms import 'model\.Q4_K_M\.gguf'/);
+  assert.match(lmStudio, /lms import \"\$workdir\/\"'model\.Q4_K_M\.gguf'/);
   assert.doesNotMatch(lmStudio, /lms get/);
 
   const mlxGuidance = buildGuidance(mlx, ["MLX"])[0].command;
@@ -128,26 +140,34 @@ test("pins ungated llama.cpp and MLX downloads to the catalogue revision", () =>
   const pinnedGguf = { ...gguf, revision: "9f4d7c1" };
   const llama = buildGuidance(pinnedGguf, ["llama.cpp"])[0].command;
   assert.match(llama, /hf download 'org\/Coder-7B-GGUF' 'model\.Q4_K_M\.gguf' --revision '9f4d7c1'/);
-  assert.match(llama, /llama-cli -m 'model\.Q4_K_M\.gguf'/);
+  assert.match(llama, /llama-cli -m \"\$workdir\/\"'model\.Q4_K_M\.gguf'/);
   assert.doesNotMatch(llama, /--hf-repo/);
 
   const pinnedMlx = { ...mlx, revision: "a1b2c3" };
   const mlxGuidance = buildGuidance(pinnedMlx, ["MLX"])[0].command;
   assert.match(mlxGuidance, /hf download 'mlx-community\/Coder-7B-4bit' --revision 'a1b2c3'/);
-  assert.match(mlxGuidance, /--model 'mlx-community-Coder-7B-4bit'/);
+  assert.match(mlxGuidance, /--local-dir \"\$workdir\"/);
+  assert.match(mlxGuidance, /--model \"\$workdir\"/);
 });
 test("uses authenticated exact-revision downloads for gated artifacts", () => {
   const gated = { ...gguf, gated: true, revision: "9f4d7c1" };
   const ollama = buildGuidance(gated, ["Ollama"])[0].command;
   assert.match(ollama, /hf auth login/);
   assert.match(ollama, /hf download 'org\/Coder-7B-GGUF' 'model\.Q4_K_M\.gguf' --revision '9f4d7c1'/);
-  assert.match(ollama, /ollama create local-model/);
+  assert.match(ollama, /ollama create 'local-/);
   assert.doesNotMatch(ollama, /curl -L/);
 
   const gatedMlx = buildGuidance({ ...mlx, gated: true, revision: "a1b2c3" }, ["MLX"])[0].command;
   assert.match(gatedMlx, /hf auth login/);
   assert.match(gatedMlx, /hf download 'mlx-community\/Coder-7B-4bit' --revision 'a1b2c3'/);
   assert.match(gatedMlx, /mlx_lm\.generate/);
+});
+
+test("ignores parameter metadata that is implausible for the artifact size", () => {
+  const spoofed = normalizeModels([{ id: "new/Definitely-Coder-999B-GGUF", downloads: 0, lastModified: "2026-08-14T00:00:00Z", pipeline_tag: "text-generation", cardData: { params: "999B" }, siblings: [{ rfilename: "model.Q4.gguf", size: 100_000_000 }] }], "gguf")[0];
+  assert.equal(spoofed.paramsB, undefined);
+  const real = normalizeModels([{ id: "org/Real-Coder-7B-GGUF", downloads: 100_000, lastModified: "2026-08-14T00:00:00Z", pipeline_tag: "text-generation", cardData: { params: "7B" }, siblings: [{ rfilename: "model.Q4.gguf", size: 5_000_000_000 }] }], "gguf")[0];
+  assert.equal(rankArtifacts([spoofed, real], { ...mac, diskGb: 10 }, Date.parse("2026-08-14T00:00:00Z"))[0].title, "Real-Coder-7B");
 });
 test("keeps non-gated runtime guidance unchanged", () => {
   assert.doesNotMatch(buildGuidance(gguf, ["Ollama"])[0].command, /hf auth login/);

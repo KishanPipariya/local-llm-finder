@@ -54,7 +54,7 @@ test("catalogue excludes non-chat tasks and non-standalone GGUF files", () => {
   assert.deepEqual(normalizationExclusions([featureExtraction], "gguf"), { unsupportedArtifact: 1 });
 
   const unknownTask = { id: "org/UnknownTask-GGUF", pipeline_tag: "future-text-task", siblings: [{ rfilename: "model.Q4.gguf", size: 4_000_000_000 }] };
-  assert.equal(normalizeModels([unknownTask], "gguf").length, 1, "unknown task metadata stays eligible and neutral");
+  assert.equal(normalizeModels([unknownTask], "gguf").length, 0, "unknown task metadata is excluded conservatively");
 
   const split = {
     id: "org/Split-GGUF",

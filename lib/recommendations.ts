@@ -54,6 +54,7 @@ export type RankingResult = { recommendations: Recommendation[]; exclusions: Exc
 
 const runtimeNames: Record<Runtime, Recommendation["runtimes"][number]> = { ollama: "Ollama", lmStudio: "LM Studio", llamaCpp: "llama.cpp", mlx: "MLX" };
 const contextOverheadGb: Record<ContextPreset, number> = { small: 0.8, normal: 1.4, long: 3.2 };
+const contextSurchargeGb: Record<ContextPreset, number> = { small: 0, normal: 0.25, long: 2 };
 const contextLabels: Record<ContextPreset, string> = { small: "Small", normal: "Normal", long: "Long" };
 
 export function runtimeEligibility(config: MacConfig, artifact: Artifact): Recommendation["runtimes"] {
@@ -63,8 +64,11 @@ export function runtimeEligibility(config: MacConfig, artifact: Artifact): Recom
 
 export function estimateMemoryGb(artifact: Artifact, context: ContextPreset = "normal"): number {
   // File mapping plus KV/context/runtime overhead; deliberately conservative.
+  // Keep a context surcharge additive so a large model does not make the
+  // user's 4K, 16K, and 32K choices collapse to the same estimate.
   const sizeGb = artifact.sizeBytes / 1e9;
-  return Math.round((sizeGb + Math.max(contextOverheadGb[context], sizeGb * 0.22) + (artifact.paramsB ? Math.min(2.5, artifact.paramsB * 0.025) : 0)) * 10) / 10;
+  const runtimeOverhead = Math.max(contextOverheadGb[context], sizeGb * 0.22) + contextSurchargeGb[context];
+  return Math.round((sizeGb + runtimeOverhead + (artifact.paramsB ? Math.min(2.5, artifact.paramsB * 0.025) : 0)) * 10) / 10;
 }
 
 export function expectedPace(profile: ChipProfile, estimatedMemoryGb: number): Recommendation["pace"] {
@@ -125,7 +129,11 @@ function workloadRelevance(category: WorkloadCategory, workload: MacConfig["work
     if (category === "unknown") return "No strong chat or coding signal was available in the metadata.";
     return `Useful for a balanced shortlist; metadata suggests ${category}.`;
   }
-  if (workload === "coding") return category === "coding-oriented" ? "Metadata suggests coding-oriented use." : "Included as a general-purpose option; its metadata is not coding-oriented.";
+  if (workload === "coding") {
+    if (category === "coding-oriented") return "Metadata suggests coding-oriented use.";
+    if (category === "mixed") return "Metadata suggests both coding and chat use.";
+    return "Included as a general-purpose option; its metadata is not coding-oriented.";
+  }
   return category === "coding-oriented" ? "Included for chat, though its metadata is coding-oriented." : category === "unknown" ? "Included for chat; the metadata has no strong workload signal." : "Metadata suggests general chat or mixed use.";
 }
 
@@ -152,26 +160,49 @@ function shellQuote(value: string) {
   return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
 
+function shellPath(variable: string, path: string) {
+  return `"${variable}/"${shellQuote(path)}`;
+}
+
+function identitySuffix(value: string) {
+  let hash = 2166136261;
+  for (const character of value) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
+  return (hash >>> 0).toString(36);
+}
+
+function localModelName(item: Artifact) {
+  const seed = `${item.modelId}-${item.filename ?? item.format}`
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .toLowerCase();
+  return `local-${(seed || "model").slice(0, 56)}-${identitySuffix(`${item.id}|${item.revision ?? "main"}`)}`;
+}
+
 export function buildGuidance(item: Artifact, runtimes: Recommendation["runtimes"]): Recommendation["guidance"] {
   const filename = item.filename ?? "model.gguf";
-  const revision = item.revision ?? "main";
-  const localModelDirectory = item.modelId.replace(/[^a-zA-Z0-9._-]+/g, "-");
-  const download = item.filename
-    ? `hf download ${shellQuote(item.modelId)} ${shellQuote(item.filename)} --revision ${shellQuote(revision)} --local-dir .`
-    : `hf download ${shellQuote(item.modelId)} --revision ${shellQuote(revision)} --local-dir ${shellQuote(localModelDirectory)}`;
-  const authenticatedDownload = `hf auth login && ${download}`;
-  const revisionPinnedDownload = item.revision ? download : undefined;
+  const revisionOption = item.revision ? ` --revision ${shellQuote(item.revision)}` : "";
+  const modelName = localModelName(item);
+  const modelFile = shellPath("$workdir", filename);
+  const modelDirectory = '"$workdir"';
+  const modelfile = `printf '%s\\n' "FROM $workdir/"${shellQuote(filename)} > "$workdir/Modelfile"`;
+  const hfDownload = `hf download ${shellQuote(item.modelId)}${item.filename ? ` ${shellQuote(item.filename)}` : ""}${revisionOption} --local-dir "$workdir"`;
+  const curlDownload = item.filename
+    ? `curl --fail --location --create-dirs ${shellQuote(item.sourceUrl)} --output ${modelFile}`
+    : hfDownload;
+  const ungatedDownload = item.format === "gguf" && !item.revision ? curlDownload : hfDownload;
+  const setup = (authenticated: boolean, download: string) => `set -eu && workdir="$(mktemp -d)" && trap 'rm -rf "$workdir"' EXIT && ${authenticated ? `hf auth login && ${download}` : download}`;
   return runtimes.map((runtime) => {
     if (!item.gated) {
-      if (runtime === "Ollama") return { runtime, command: `curl --fail --location --create-dirs ${shellQuote(item.sourceUrl)} --output ${shellQuote(filename)} && printf '%s\\n' ${shellQuote(`FROM ./${filename}`)} > Modelfile && ollama create local-model -f Modelfile && ollama run local-model` };
-      if (runtime === "LM Studio") return { runtime, command: `curl --fail --location --create-dirs ${shellQuote(item.sourceUrl)} --output ${shellQuote(filename)} && lms import ${shellQuote(filename)}` };
-      if (runtime === "llama.cpp") return { runtime, command: revisionPinnedDownload ? `${revisionPinnedDownload} && llama-cli -m ${shellQuote(filename)} -p "Hello"` : `llama-cli --hf-repo ${shellQuote(item.modelId)}${item.filename ? ` --hf-file ${shellQuote(item.filename)}` : ""} -p "Hello"` };
-      return { runtime, command: revisionPinnedDownload ? `${revisionPinnedDownload} && uvx --from mlx-lm mlx_lm.generate --model ${shellQuote(localModelDirectory)} --prompt "Hello"` : `uvx --from mlx-lm mlx_lm.generate --model ${shellQuote(item.modelId)} --prompt "Hello"` };
+      if (runtime === "Ollama") return { runtime, command: `${setup(false, ungatedDownload)} && ${modelfile} && ollama create ${shellQuote(modelName)} -f "$workdir/Modelfile" && ollama run ${shellQuote(modelName)}` };
+      if (runtime === "LM Studio") return { runtime, command: `${setup(false, ungatedDownload)} && lms import ${modelFile}` };
+      if (runtime === "llama.cpp") return { runtime, command: `${setup(false, ungatedDownload)} && llama-cli -m ${modelFile} -p "Hello"` };
+      return { runtime, command: `${setup(false, ungatedDownload)} && uvx --from mlx-lm mlx_lm.generate --model ${modelDirectory} --prompt "Hello"` };
     }
-    if (runtime === "Ollama") return { runtime, command: `${authenticatedDownload} && printf '%s\\n' ${shellQuote(`FROM ./${filename}`)} > Modelfile && ollama create local-model -f Modelfile && ollama run local-model` };
-    if (runtime === "LM Studio") return { runtime, command: `${authenticatedDownload} && lms import ${shellQuote(filename)}` };
-    if (runtime === "llama.cpp") return { runtime, command: `${authenticatedDownload} && llama-cli -m ${shellQuote(filename)} -p "Hello"` };
-    return { runtime, command: `${authenticatedDownload} && uvx --from mlx-lm mlx_lm.generate --model ${shellQuote(localModelDirectory)} --prompt "Hello"` };
+    if (runtime === "Ollama") return { runtime, command: `${setup(true, hfDownload)} && ${modelfile} && ollama create ${shellQuote(modelName)} -f "$workdir/Modelfile" && ollama run ${shellQuote(modelName)}` };
+    if (runtime === "LM Studio") return { runtime, command: `${setup(true, hfDownload)} && lms import ${modelFile}` };
+    if (runtime === "llama.cpp") return { runtime, command: `${setup(true, hfDownload)} && llama-cli -m ${modelFile} -p "Hello"` };
+    return { runtime, command: `${setup(true, hfDownload)} && uvx --from mlx-lm mlx_lm.generate --model ${modelDirectory} --prompt "Hello"` };
   });
 }
 

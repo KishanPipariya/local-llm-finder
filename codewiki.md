@@ -31,9 +31,10 @@ Mac, free-storage, and runtime assumptions and includes a complete valid
 configuration, so it is shareable and lands directly on server-rendered results
 without JavaScript. The form includes a native “Find your Mac specs” disclosure
 that explains chip, unified memory, and free disk space in plain language.
-`FinderForm` and its small `HardwareSelector` enhancement render only the
-selected chip's valid unified-memory options from the initial server response.
-With JavaScript, changing chip retains a compatible memory amount or chooses the
+`FinderForm` and its small `HardwareSelector` enhancement server-render the
+union of memory options so the GET form remains usable without JavaScript. After
+hydration, the selector narrows to the selected chip's valid options. With
+JavaScript, changing chip retains a compatible memory amount or chooses the
 closest valid amount (ties go lower), then announces the adjustment. The live
 “Profile ready” summary and submit label reflect chip, memory, available
 storage, use, context, and runtime as choices change. Without JavaScript, the
@@ -153,16 +154,14 @@ artifacts.
   quantization variant (Q2–Q8, IQ variants, and F16/BF16/F32 labels when
   present). Split shards and auxiliary `mmproj`, tokenizer, adapter, LoRA, and
   imatrix files are excluded because the exact-file guidance cannot run them by
-  themselves. Known incompatible pipeline tasks are excluded; missing or unknown
-  task metadata remains eligible but neutral. It supports Ollama, LM Studio,
-  and llama.cpp. Its Ollama guidance remains the explicit
-  download-and-`ollama create` import recipe; LM Studio guidance downloads the
-  exact verified GGUF source URL and runs `lms import` on that downloaded file;
-  llama.cpp guidance uses its separate repository and exact-file flags when no
-  immutable revision is available; otherwise it downloads the pinned file before
-  local execution. Download recipes use strict curl failure handling, create nested output directories,
-  and shell-quote catalogue-controlled values; arbitrary Hugging Face files
-  never use `ollama pull` or a catalogue search command.
+  themselves. Explicit unknown or incompatible pipeline tasks are excluded;
+  missing task metadata remains eligible but neutral because it is common on
+  quantized repositories. It supports Ollama, LM Studio, and llama.cpp. Each
+  runtime recipe downloads into a fresh temporary directory (`curl` for an
+  unpinned ungated GGUF file, `hf` for pinned or gated files and MLX snapshots), uses an
+  artifact-specific local model name, and shell-quotes catalogue-controlled
+  values; arbitrary Hugging Face files never use `ollama pull` or a catalogue
+  search command.
 - MLX: require at least one positively sized `.safetensors` weight file and a
   supported text-generation pipeline, then sum every file in the repository
   snapshot—not only recognised runtime assets.
@@ -178,7 +177,10 @@ artifacts.
   typical chat/coding, and Long (32K tokens) reserves more headroom for large
   documents or repositories. A selected runtime filters results to directly
   usable formats and gives each card one exact-file setup command.
-  A model is omitted when the estimate exceeds unified memory. Recommendations
+  Context surcharges remain additive even for large artifacts, so changing from
+  Small to Normal to Long always changes the estimate. Parameter metadata is
+  ignored when it is implausibly large for the exact artifact size. A model is
+  omitted when the estimate exceeds unified memory. Recommendations
   warn when estimated unified-memory headroom is below 2 GB; eligibility itself
   remains unchanged. Fit estimates are not run-success guarantees.
 - Gated models remain eligible, but carry a sign-in and licence-acceptance note.
@@ -201,8 +203,9 @@ recommendation includes typed fit checks (disk and memory headroom, compatible
 runtimes, workload category, and pace inputs), ranking contributors, and its
 normalized family key. Hugging Face `pipeline_tag` is retained alongside titles
 and tags: text generation, text-to-text generation, instruct/chat, and coding
-metadata add a bounded workload preference. Missing or unknown task metadata
-stays eligible and neutral; only an explicit known incompatible task is excluded.
+metadata add a bounded workload preference. Missing task metadata stays eligible
+and neutral; explicit unknown or incompatible pipeline tasks are excluded
+conservatively.
 Numeric parameter metadata is normalized to billions whether the card supplies
 a small billions value or a large raw count. Workload metadata is presented only as
 coding-oriented, general chat, mixed, or unknown—not as a capability benchmark. Ranking
