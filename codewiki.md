@@ -163,7 +163,11 @@ artifacts.
   unpinned ungated GGUF file, `hf` for pinned or gated files and MLX snapshots), uses an
   artifact-specific local model name, and shell-quotes catalogue-controlled
   values; arbitrary Hugging Face files never use `ollama pull` or a catalogue
-  search command.
+  search command. `sourceUrl` remains the exact GGUF download or MLX
+  repository URL used by installation guidance, while optional `viewUrl`
+  points to the human-facing Hugging Face file or repository viewer. Model
+  context metadata is normalized to
+  `maxContextTokens` when available.
 - MLX: require at least one positively sized `.safetensors` weight file and a
   supported text-generation pipeline, then sum every file in the repository
   snapshot—not only recognised runtime assets.
@@ -172,7 +176,7 @@ artifacts.
   download estimates conservative. Its guidance uses `uvx --from mlx-lm
   mlx_lm.generate`. It supports MLX.
 - Disk fit is operationally strict: the exact artifact must leave at least 20%
-  free disk after download, because imports and temporary working files can need
+  of the original free disk after download, because imports and temporary working files can need
   additional space. Recommendations can still warn when headroom is only 20–25%.
 - Memory estimate adds conservative file-mapping, runtime, and context overhead.
   Small (4K tokens) is for short chats, Normal (16K tokens) is the default for
@@ -184,7 +188,10 @@ artifacts.
   ignored when it is implausibly large for the exact artifact size. A model is
   omitted when the estimate exceeds unified memory. Recommendations
   warn when estimated unified-memory headroom is below 2 GB; eligibility itself
-  remains unchanged. Fit estimates are not run-success guarantees.
+  remains unchanged. Known model context limits below the selected 4K, 16K, or
+  32K preset are excluded as `insufficientContext`; unknown limits remain
+  eligible but are labeled as memory-only estimates. Fit estimates are not
+  run-success guarantees.
 - Gated models remain eligible, but carry a sign-in and licence-acceptance note.
   Their guidance starts with `hf auth login`, downloads the exact artifact or
   repository snapshot at the immutable Hugging Face revision when available,
@@ -201,8 +208,9 @@ popularity. Download footprint is never treated as a parameter-count proxy.
 It keeps the highest-ranked representative of
 each normalized model-family/format/quantization variant, prioritizes one
 representative from each family before adding additional variants, and returns at most ten results. Every returned
-recommendation includes typed fit checks (disk and memory headroom, compatible
-runtimes, workload category, and pace inputs), ranking contributors, and its
+recommendation includes typed fit checks (disk and memory headroom, verified or
+unknown context capacity, compatible runtimes, workload category, and pace
+inputs), ranking contributors, and its
 normalized family key. Hugging Face `pipeline_tag` is retained alongside titles
 and tags: generic `text-generation` and `text2text-generation` identify compatible
 generation tasks but do not by themselves imply chat suitability; instruct/chat
@@ -211,7 +219,9 @@ Missing task metadata stays eligible and neutral; explicit unknown or incompatib
 pipeline tasks are excluded conservatively. Numeric parameter metadata is
 normalized to billions from standard GGUF or safetensors totals, model-card
 values, base-model names, or repository names when plausible. Workload metadata is presented only as
-coding-oriented, general chat, mixed, or unknown—not as a capability benchmark. Ranking
+coding-oriented, general chat, mixed, or unknown—not as a capability benchmark. A bounded
+precision preference ranks higher-precision variants ahead of more aggressively
+compressed variants when both fit; this is not presented as a quality benchmark. Ranking
 accepts an optional clock value for deterministic callers and tests; normal
 requests use `Date.now()`. Equal scores use stable artifact identity fields as
 explicit tie-breakers, so an upstream list's order cannot change a shortlist.
@@ -223,7 +233,7 @@ file because each file is a separately recommendable artifact; MLX invalid-size
 exclusions are counted once per repository snapshot because MLX downloads the
 complete repository. The
 UI only exposes reasons with a non-zero count and offers safe next actions for
-disk, memory, unsupported-format, unsupported-artifact, and invalid-size
+disk, memory, context, unsupported-format, unsupported-artifact, and invalid-size
 constraints. Invalid sizes, incomplete files, and known non-chat tasks remain
 excluded and are never shown as installable artifacts.
 
@@ -251,7 +261,8 @@ Because those list responses contain filenames but not reliable byte sizes, it
 then obtains each selected repository's `blobs=true` metadata with a bounded
 global concurrency of six in-flight requests across both formats. A repository that disappears or
 fails during that second step is excluded; its unverified files are never
-recommended. If more than half of detail requests fail overall, more than half
+recommended. The detail response also supplies optional model configuration and
+GGUF context metadata used to verify the selected context preset. If more than half of detail requests fail overall, more than half
 fail within either format, or no verified repository remains for a format, the
 refresh is treated as materially incomplete and fails atomically rather than
 replacing the last valid catalogue with a severely truncated one. Each request has a 12-second
@@ -267,7 +278,8 @@ blocks only for the shared refresh budget; without a successful catalogue, the
 error is propagated. Once a catalogue has expired, callers immediately receive
 the prior catalogue with `stale: true` while one shared background refresh runs.
 A successful background refresh replaces the cache and clears the retry backoff.
-A failed refresh is consumed internally, keeps the prior catalogue stale, and
+A failed refresh—or a framework-cache call that resolves only to an already
+stale catalogue—is consumed internally, keeps the prior catalogue stale, and
 waits five minutes before the next refresh attempt, avoiding repeated upstream
 calls during an outage. Cold failures also honour the same backoff before
 returning another unavailable response.

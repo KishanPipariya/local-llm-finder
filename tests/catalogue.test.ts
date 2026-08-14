@@ -5,12 +5,13 @@ import { getCatalogue, interleaveUnique, mapWithConcurrency, normalizationExclus
 const listedModel = { id: "org/Model-GGUF", siblings: [{ rfilename: "model.Q4_K_M.gguf", size: 4_000_000_000 }] };
 const listedMlxModel = { id: "mlx-community/Model", siblings: [{ rfilename: "weights.safetensors", size: 4_000_000_000 }, { rfilename: "config.json", size: 1_000 }, { rfilename: "tokenizer.json", size: 1_000 }] };
 test("normalization discards malformed optional Hugging Face metadata", () => {
-  const [model] = parseHubModelList([{ ...listedModel, downloads: "many", lastModified: 42, gated: { value: true }, tags: ["code", 42], pipeline_tag: ["text-generation"], gguf: { total: "large", chat_template: 4 }, safetensors: { total: "large", parameters: { BF16: "large" } }, cardData: { license: 3, params: {}, base_model: ["base/model"] }, siblings: [{ rfilename: "model.Q4_K_M.gguf", size: "large" }, listedModel.siblings[0], { rfilename: 42, size: 5 }] }]);
+  const [model] = parseHubModelList([{ ...listedModel, downloads: "many", lastModified: 42, gated: { value: true }, tags: ["code", 42], pipeline_tag: ["text-generation"], gguf: { total: "large", chat_template: 4, context_length: "large" }, safetensors: { total: "large", parameters: { BF16: "large" } }, config: { max_position_embeddings: "large" }, cardData: { license: 3, params: {}, base_model: ["base/model"] }, siblings: [{ rfilename: "model.Q4_K_M.gguf", size: "large" }, listedModel.siblings[0], { rfilename: 42, size: 5 }] }]);
   assert.deepEqual(model.tags, ["code"]);
   assert.equal(model.downloads, undefined);
   assert.equal(model.cardData?.base_model, "base/model");
   assert.equal(model.gguf, undefined);
   assert.equal(model.safetensors, undefined);
+  assert.equal(model.config, undefined);
   assert.deepEqual(normalizeModels([model], "gguf").map((artifact) => artifact.sizeBytes), [4_000_000_000]);
   assert.equal(normalizeHubModel(null), undefined);
   assert.equal(normalizeHubModel({}), undefined);
@@ -26,7 +27,7 @@ test("normalizes numeric parameter metadata into billions", () => {
 test("normalizes standard Hugging Face GGUF metadata", () => {
   const model = {
     id: "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF",
-    gguf: { total: 7_615_616_512, chat_template: "{{ messages }}" },
+    gguf: { total: 7_615_616_512, chat_template: "{{ messages }}", context_length: 32768 },
     cardData: { base_model: "Qwen/Qwen2.5-Coder-7B-Instruct" },
     siblings: [{ rfilename: "qwen.Q4_K_M.gguf", size: 4_000_000_000 }],
   };
@@ -34,6 +35,7 @@ test("normalizes standard Hugging Face GGUF metadata", () => {
   assert.equal(artifact.paramsB, 7.615616512);
   assert.equal(artifact.baseModel, "Qwen/Qwen2.5-Coder-7B-Instruct");
   assert.equal(artifact.chatTemplate, true);
+  assert.equal(artifact.maxContextTokens, 32768);
 });
 
 test("falls back to standard parameter metadata when a custom card value is implausible", () => {

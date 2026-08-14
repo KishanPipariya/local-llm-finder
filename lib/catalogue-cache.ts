@@ -33,7 +33,22 @@ export class CatalogueCache {
     if (this.refreshInFlight) return this.refreshInFlight;
     this.refreshInFlight = (async () => {
       try {
+        const previous = this.state;
         const catalogue = await this.refresh();
+        // A framework cache may resolve with its stale value while it refreshes
+        // in the background. Treat that as an incomplete refresh here so the
+        // process-local retry backoff still protects the upstream catalogue.
+        const fresh = isFresh(catalogue, this.clock(), this.maxAge);
+        if (!fresh) {
+          this.retryAfter = this.clock() + this.retryDelay;
+          // Preserve the last known-good local value when one exists. On a
+          // cold start, retain the framework-provided stale value so callers
+          // still see an explicit stale result and the next attempt respects
+          // the same backoff.
+          if (previous) return previous;
+          this.state = catalogue;
+          return catalogue;
+        }
         this.state = catalogue;
         this.retryAfter = 0;
         return catalogue;

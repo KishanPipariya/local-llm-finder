@@ -23,7 +23,7 @@ You can also explore local-model tools and catalogues directly:
 
 - Complete, shareable GET links and a server-rendered form that work without JavaScript.
 - Validated Apple Silicon chip and unified-memory combinations.
-- Hugging Face GGUF recommendations for Ollama, LM Studio, and llama.cpp, plus MLX recommendations for MLX.
+- Hugging Face GGUF recommendations for Ollama, LM Studio, and llama.cpp, plus MLX recommendations for MLX, with separate viewer and download links.
 - A server-side Hugging Face catalogue with a six-hour framework refresh cache, six-hour local cache, and stale fallback.
 
 ## Request and data flow
@@ -49,10 +49,12 @@ POST /api/recommendations ┘                                      └───�
 }
 ```
 
-A successful response returns the existing recommendation result object, including `recommendations`, `exclusions`, and `stale`. Invalid configurations return `400` with `errors` and `fieldErrors`; a catalogue outage with no cached result returns `503` with `error`. JSON request bodies are bounded before parsing. The GET-only `runtime=any` choice represents the legacy runtime-neutral preference; the JSON API accepts only concrete runtime names.
+A successful response returns the existing recommendation result object, including `recommendations`, `exclusions`, and `stale`. Exclusions include disk, memory, verified-context, invalid-size, unsupported-format, and unsupported-artifact counts. Invalid configurations return `400` with `errors` and `fieldErrors`; a catalogue outage with no cached result returns `503` with `error`. JSON request bodies are bounded before parsing. The GET-only `runtime=any` choice represents the legacy runtime-neutral preference; the JSON API accepts only concrete runtime names.
 
 Hugging Face GGUF files use import-based Ollama guidance; the finder never
-emits `ollama pull` for an arbitrary Hugging Face file. Gated artifacts keep
+emits `ollama pull` for an arbitrary Hugging Face file. Human-facing source links
+open the Hugging Face viewer while installation guidance retains the exact
+artifact or repository URL. Gated artifacts keep
 their licence warning and use `hf auth login` plus an exact-revision download
 before the runtime-specific import command.
 

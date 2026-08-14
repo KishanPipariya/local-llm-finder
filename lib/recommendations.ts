@@ -18,7 +18,12 @@ export type Artifact = {
   pipelineTag?: string;
   baseModel?: string;
   chatTemplate?: boolean;
+  /** URL retained for installation guidance: an exact GGUF file or MLX repository. */
   sourceUrl: string;
+  /** Human-facing Hugging Face viewer URL; unlike sourceUrl, this must not download the artifact. */
+  viewUrl?: string;
+  /** Verified model context capacity when catalogue metadata supplies one. */
+  maxContextTokens?: number;
   repositoryUrl: string;
   /** Immutable Hugging Face commit revision when supplied by the catalogue. */
   revision?: string;
@@ -41,7 +46,7 @@ export type RecommendationExplanation = {
   fit: {
     disk: { availableBytes: number; headroomBytes: number };
     memory: { availableGb: number; headroomGb: number; assumption: string };
-    context: { preset: ContextPreset; label: string };
+    context: { preset: ContextPreset; label: string; requestedTokens: number; maxTokens?: number };
     runtimes: Recommendation["runtimes"];
     workload: { category: WorkloadCategory; relevance: string };
     pace: { bandwidthGbps: number; inputs: string };
@@ -50,7 +55,7 @@ export type RecommendationExplanation = {
   familyKey: string;
 };
 
-export type ExclusionReason = "insufficientDisk" | "insufficientMemory" | "invalidSize" | "unsupportedFormat" | "unsupportedArtifact";
+export type ExclusionReason = "insufficientDisk" | "insufficientMemory" | "insufficientContext" | "invalidSize" | "unsupportedFormat" | "unsupportedArtifact";
 export type ExclusionSummary = Record<ExclusionReason, number>;
 export type RankingResult = { recommendations: Recommendation[]; exclusions: ExclusionSummary };
 
@@ -58,7 +63,8 @@ const runtimeNames: Record<Runtime, Recommendation["runtimes"][number]> = { olla
 const contextOverheadGb: Record<ContextPreset, number> = { small: 0.8, normal: 1.4, long: 3.2 };
 const contextSurchargeGb: Record<ContextPreset, number> = { small: 0, normal: 0.25, long: 2 };
 const contextLabels: Record<ContextPreset, string> = { small: "Small", normal: "Normal", long: "Long" };
-const operationalDiskHeadroom = 1.2;
+const contextTokens: Record<ContextPreset, number> = { small: 4_096, normal: 16_384, long: 32_768 };
+const operationalDiskHeadroom = 1.25;
 
 export function runtimeEligibility(config: MacConfig, artifact: Artifact): Recommendation["runtimes"] {
   if (artifact.format === "mlx") return ["MLX"];
@@ -87,7 +93,20 @@ function modelScore(item: Artifact, config: MacConfig, memoryGb: number, now: nu
   // Do not turn missing parameter metadata into an unsupported capability claim.
   const capacity = item.paramsB ? Math.min(35, Math.log2(item.paramsB + 1) * 8) : 0;
   const pace = Math.min(45, Math.log2(chipProfiles[config.chip].bandwidthGbps / memoryGb + 1) * 10);
-  return capacity + pace + work + recencyScore(item.updatedAt, now) + Math.min(12, Math.log10(Math.max(0, item.downloads) + 1) * 2);
+  return capacity + pace + quantizationPreference(item) + work + recencyScore(item.updatedAt, now) + Math.min(12, Math.log10(Math.max(0, item.downloads) + 1) * 2);
+}
+
+function quantizationPreference(item: Artifact) {
+  const quantization = item.quantization?.toUpperCase();
+  if (!quantization) return 0;
+  if (/^(?:I?Q)2/.test(quantization)) return 0;
+  if (/^(?:I?Q)3/.test(quantization)) return 3;
+  if (/^(?:I?Q)4/.test(quantization)) return 6;
+  if (/^(?:I?Q)5/.test(quantization)) return 8;
+  if (/^(?:I?Q)6/.test(quantization)) return 10;
+  if (/^Q8/.test(quantization)) return 12;
+  if (/^(?:BF16|F16|F32)$/.test(quantization)) return 14;
+  return 0;
 }
 
 function isCodingOriented(item: Artifact) {
@@ -159,7 +178,7 @@ function compareArtifactIdentity(a: Artifact, b: Artifact) {
 }
 
 function emptyExclusions(): ExclusionSummary {
-  return { insufficientDisk: 0, insufficientMemory: 0, invalidSize: 0, unsupportedFormat: 0, unsupportedArtifact: 0 };
+  return { insufficientDisk: 0, insufficientMemory: 0, insufficientContext: 0, invalidSize: 0, unsupportedFormat: 0, unsupportedArtifact: 0 };
 }
 
 function shellQuote(value: string) {
@@ -225,6 +244,7 @@ export function rankArtifactsWithExplanations(artifacts: Artifact[], config: Mac
     if (!runtimes.length) { exclusions.unsupportedFormat += 1; return []; }
     if (item.sizeBytes * operationalDiskHeadroom > config.diskGb * 1e9) { exclusions.insufficientDisk += 1; return []; }
     if (memoryGb > config.memoryGb) { exclusions.insufficientMemory += 1; return []; }
+    if (item.maxContextTokens !== undefined && item.maxContextTokens < contextTokens[context]) { exclusions.insufficientContext += 1; return []; }
     const tight = memoryGb > config.memoryGb * 0.82;
     const slow = memoryGb > config.memoryGb * 0.94;
     const notes: string[] = [];
@@ -242,11 +262,13 @@ export function rankArtifactsWithExplanations(artifacts: Artifact[], config: Mac
     const rankingFactors = [
       workloadRelevance(category, config.workload),
       item.paramsB ? `${item.paramsB}B parameter metadata contributes to capacity ranking.` : "Parameter metadata was unavailable, so download size is not treated as a capability signal.",
+      item.maxContextTokens !== undefined ? `Catalogue metadata reports a maximum context of ${item.maxContextTokens.toLocaleString()} tokens.` : "Model context capacity was unavailable, so context fit is a memory estimate rather than a verified model limit.",
+      item.quantization ? "Quantization precision receives a bounded preference among variants that fit; this is not a model-quality benchmark." : "No quantization metadata was available for a precision preference.",
       `${profile.name}'s ${profile.bandwidthGbps} GB/s memory bandwidth contributes to the qualitative pace estimate.`,
       "More recently updated catalogue entries receive a small, bounded freshness signal.",
       "Download count is used as a light popularity signal, not a quality benchmark.",
     ];
-    return [{ ...item, runtimes, memoryGb, performance, pace, notes, why: `${item.paramsB ? `${item.paramsB}B parameters` : "A current compact model"}; ${workloadRelevance(category, config.workload)} It leaves ${memoryHeadroom.toFixed(1)} GB of estimated memory headroom at the ${contextLabels[context].toLowerCase()} context preset.`, guidance: buildGuidance(item, runtimes), explanation: { fit: { disk: { availableBytes: config.diskGb * 1e9, headroomBytes: diskHeadroom }, memory: { availableGb: config.memoryGb, headroomGb: memoryHeadroom, assumption: `File mapping plus conservative runtime, ${contextLabels[context].toLowerCase()}-context, and KV-cache overhead.` }, context: { preset: context, label: contextLabels[context] }, runtimes, workload: { category, relevance: workloadRelevance(category, config.workload) }, pace: { bandwidthGbps: profile.bandwidthGbps, inputs: "Published family memory bandwidth relative to estimated model memory." } }, rankingFactors, familyKey: familyKey(item) } }];
+    return [{ ...item, runtimes, memoryGb, performance, pace, notes, why: `${item.paramsB ? `${item.paramsB}B parameters` : "A current compact model"}; ${workloadRelevance(category, config.workload)} It leaves ${memoryHeadroom.toFixed(1)} GB of estimated memory headroom at the ${contextLabels[context].toLowerCase()} context preset.`, guidance: buildGuidance(item, runtimes), explanation: { fit: { disk: { availableBytes: config.diskGb * 1e9, headroomBytes: diskHeadroom }, memory: { availableGb: config.memoryGb, headroomGb: memoryHeadroom, assumption: `File mapping plus conservative runtime, ${contextLabels[context].toLowerCase()}-context, and KV-cache overhead.` }, context: { preset: context, label: contextLabels[context], requestedTokens: contextTokens[context], maxTokens: item.maxContextTokens }, runtimes, workload: { category, relevance: workloadRelevance(category, config.workload) }, pace: { bandwidthGbps: profile.bandwidthGbps, inputs: "Published family memory bandwidth relative to estimated model memory." } }, rankingFactors, familyKey: familyKey(item) } }];
   });
   const grouped = new Map<string, Recommendation>();
   for (const item of eligible.sort((a, b) => {

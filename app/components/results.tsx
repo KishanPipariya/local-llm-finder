@@ -6,6 +6,7 @@ import { ResultsHeader } from "./results-header";
 const exclusionDetails = [
   ["insufficientDisk", "insufficient disk", "Free storage or choose a smaller quantization."],
   ["insufficientMemory", "insufficient unified memory", "Choose a smaller model or quantization, and close other apps."],
+  ["insufficientContext", "insufficient model context", "Choose shorter context or a model with a larger verified context limit."],
   ["invalidSize", "unknown or implausible artifact size", "These files are intentionally not presented as installable."],
   ["unsupportedFormat", "unsupported format", "Choose GGUF for Ollama, LM Studio, or llama.cpp, or MLX for MLX."],
   ["unsupportedArtifact", "incomplete or non-chat artifact", "Only complete, self-contained text-model artifacts are presented."],

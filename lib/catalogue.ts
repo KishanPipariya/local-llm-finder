@@ -8,8 +8,9 @@ export { REFRESH_TIMEOUT_MS } from "./catalogue-request";
 const HUB_BASE = "https://huggingface.co/api/models";
 
 export type HubFile = { rfilename: string; size?: number };
-type HubGguf = { total?: number; chat_template?: string };
+type HubGguf = { total?: number; chat_template?: string; context_length?: number };
 type HubSafetensors = { total?: number; parameters?: Record<string, number> };
+type HubConfig = { max_position_embeddings?: number; max_sequence_length?: number; context_length?: number; n_ctx?: number; max_seq_len?: number };
 export type HubModel = {
   id: string;
   sha?: string;
@@ -20,6 +21,7 @@ export type HubModel = {
   pipeline_tag?: string;
   gguf?: HubGguf;
   safetensors?: HubSafetensors;
+  config?: HubConfig;
   cardData?: { license?: string; model_name?: string; params?: string | number; base_model?: string };
   siblings?: HubFile[];
 };
@@ -54,6 +56,7 @@ const isStandaloneGguf = (file: HubFile) => !isGgufShard(file) && !isGgufAuxilia
 const repoUrl = (id: string) => `https://huggingface.co/${id}`;
 const revisionUrl = (id: string, revision?: string) => revision ? `${repoUrl(id)}/tree/${encodeURIComponent(revision)}` : repoUrl(id);
 const fileUrl = (id: string, filename: string, revision?: string) => `${repoUrl(id)}/resolve/${encodeURIComponent(revision ?? "main")}/${filename.split("/").map(encodeURIComponent).join("/")}`;
+const fileViewUrl = (id: string, filename: string, revision?: string) => `${repoUrl(id)}/blob/${encodeURIComponent(revision ?? "main")}/${filename.split("/").map(encodeURIComponent).join("/")}`;
 const modelInfoUrl = (id: string) => `${HUB_BASE}/${id.split("/").map(encodeURIComponent).join("/")}?blobs=true`;
 
 function asRecord(value: unknown): UnknownRecord | undefined {
@@ -100,7 +103,8 @@ function normalizeGguf(value: unknown): HubModel["gguf"] | undefined {
   if (!gguf) return undefined;
   const total = asFiniteNumber(gguf.total);
   const chatTemplate = asString(gguf.chat_template);
-  return total === undefined && chatTemplate === undefined ? undefined : { total, chat_template: chatTemplate };
+  const contextLength = asFiniteNumber(gguf.context_length);
+  return total === undefined && chatTemplate === undefined && contextLength === undefined ? undefined : { total, chat_template: chatTemplate, context_length: contextLength };
 }
 
 function normalizeSafetensors(value: unknown): HubModel["safetensors"] | undefined {
@@ -116,6 +120,19 @@ function normalizeSafetensors(value: unknown): HubModel["safetensors"] | undefin
     : undefined;
   const parameters = parsedParameters && Object.keys(parsedParameters).length > 0 ? parsedParameters : undefined;
   return total === undefined && !parameters ? undefined : { total, parameters };
+}
+
+function normalizeConfig(value: unknown): HubModel["config"] | undefined {
+  const config = asRecord(value);
+  if (!config) return undefined;
+  const normalized = {
+    max_position_embeddings: asFiniteNumber(config.max_position_embeddings),
+    max_sequence_length: asFiniteNumber(config.max_sequence_length),
+    context_length: asFiniteNumber(config.context_length),
+    n_ctx: asFiniteNumber(config.n_ctx),
+    max_seq_len: asFiniteNumber(config.max_seq_len),
+  };
+  return Object.values(normalized).some((candidate) => candidate !== undefined) ? normalized : undefined;
 }
 
 export function normalizeHubModel(value: unknown): HubModel | undefined {
@@ -142,6 +159,7 @@ export function normalizeHubModel(value: unknown): HubModel | undefined {
     pipeline_tag: pipelineTag,
     gguf: normalizeGguf(model.gguf),
     safetensors: normalizeSafetensors(model.safetensors),
+    config: normalizeConfig(model.config),
     cardData: normalizeCardData(model.cardData),
     siblings,
   };
@@ -190,6 +208,18 @@ function modelParamCandidates(model: HubModel): unknown[] {
   return [model.cardData?.params, model.gguf?.total, safetensorsTotal, model.cardData?.base_model, model.id];
 }
 
+function modelContextTokens(model: HubModel): number | undefined {
+  const candidates = [
+    model.gguf?.context_length,
+    model.config?.max_position_embeddings,
+    model.config?.max_sequence_length,
+    model.config?.context_length,
+    model.config?.n_ctx,
+    model.config?.max_seq_len,
+  ].filter((candidate): candidate is number => typeof candidate === "number" && Number.isSafeInteger(candidate) && candidate > 0 && candidate <= 1_000_000);
+  return candidates.length ? Math.min(...candidates) : undefined;
+}
+
 export function normalizeModels(models: HubModel[], format: Artifact["format"]): Artifact[] {
   return models.flatMap((model) => {
     if (!isSupportedTask(model)) return [];
@@ -227,6 +257,8 @@ export function normalizeModels(models: HubModel[], format: Artifact["format"]):
         chatTemplate: Boolean(model.gguf?.chat_template),
         repositoryUrl: repoUrl(model.id),
         sourceUrl: filename ? fileUrl(model.id, filename, model.sha) : revisionUrl(model.id, model.sha),
+        viewUrl: filename ? fileViewUrl(model.id, filename, model.sha) : revisionUrl(model.id, model.sha),
+        maxContextTokens: modelContextTokens(model),
         revision: model.sha,
         filename,
       }];

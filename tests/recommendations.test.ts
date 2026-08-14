@@ -63,7 +63,7 @@ test("validates optional runtime and context preferences without requiring them 
   assert.equal(validateConfig({ ...mac, runtime: "other" }).valid, false);
   assert.equal(validateConfig({ ...mac, context: "huge" }).valid, false);
 });
-test("enforces operational disk headroom and estimates from exact bytes", () => { assert.equal(rankArtifacts([gguf], { ...mac, diskGb: 5.999999999 }).length, 0); assert.equal(rankArtifacts([gguf], { ...mac, diskGb: 6 }).length, 1); assert.ok(estimateMemoryGb({ ...gguf, sizeGb: 1 }) > 5); });
+test("enforces operational disk headroom and estimates from exact bytes", () => { assert.equal(rankArtifacts([gguf], { ...mac, diskGb: 6.249999999 }).length, 0); assert.equal(rankArtifacts([gguf], { ...mac, diskGb: 6.25 }).length, 1); assert.ok(estimateMemoryGb({ ...gguf, sizeGb: 1 }) > 5); });
 test("ranks coding models and carries gated and licence warnings plus runtime commands", () => { const generic = { ...gguf, id: "org/Chat-8B-GGUF", modelId: "org/Chat-8B-GGUF", title: "Chat 8B", paramsB: 8, tags: [] }; const gated = { ...gguf, gated: true, licence: "apache-2.0" }; const ranked = rankArtifacts([generic, gated], mac); assert.equal(ranked[0].title, "Coder 7B"); assert.ok(ranked[0].notes.some((note) => note.startsWith("Gated"))); assert.ok(ranked[0].notes.some((note) => note.startsWith("Licence: apache-2.0"))); assert.ok(ranked[0].guidance.some((g) => g.runtime === "llama.cpp" && g.command.includes("hf auth login") && g.command.includes("-m"))); });
 test("uses Hugging Face task metadata as a bounded workload preference", () => {
   const coding = { ...gguf, id: "org/Code-GGUF/file.gguf", modelId: "org/Code-GGUF", title: "Plain model", tags: ["coding"], pipelineTag: undefined };
@@ -118,6 +118,7 @@ test("keeps fit tied to memory but changes pace and ranking by chip bandwidth", 
 test("names the exact GGUF file in links and runtime guidance", () => {
   const recommendation = rankArtifacts([gguf], mac)[0];
   assert.equal(recommendation.sourceUrl, gguf.sourceUrl);
+  assert.equal(recommendation.viewUrl, undefined, "hand-built fixtures without a viewer URL fall back to the repository");
   const llama = recommendation.guidance.find((guide) => guide.runtime === "llama.cpp")!.command;
   assert.match(llama, /curl --fail --location --create-dirs 'https:\/\/huggingface\.co\/org\/Coder-7B-GGUF\/resolve\/main\/model\.Q4_K_M\.gguf'/);
   assert.match(llama, /--output \"\$workdir\/\"'model\.Q4_K_M\.gguf'/);
@@ -204,6 +205,7 @@ test("returns typed fit explanations and actionable exclusion categories", () =>
   const result = rankArtifactsWithExplanations([gguf, tooLarge, tooHungry, invalid], { ...mac, diskGb: 20 });
   assert.equal(result.exclusions.insufficientDisk, 1);
   assert.equal(result.exclusions.insufficientMemory, 1);
+  assert.equal(result.exclusions.insufficientContext, 0);
   assert.equal(result.exclusions.invalidSize, 1);
   assert.equal(result.recommendations[0].explanation.fit.disk.availableBytes, 20_000_000_000);
   assert.equal(result.recommendations[0].explanation.fit.memory.assumption.includes("normal-context"), true);
@@ -211,12 +213,14 @@ test("returns typed fit explanations and actionable exclusion categories", () =>
   assert.ok(result.recommendations[0].explanation.rankingFactors.length >= 3);
 });
 test("normalizes exact GGUF and aggregate MLX artifact sizes", () => {
-  const model = { id: "org/Test-GGUF", sha: "immutable-revision", pipeline_tag: "text-generation", siblings: [{ rfilename: "large.Q8.gguf", size: 8_000_000_000 }, { rfilename: "small.Q4_K_M.gguf", size: 4_000_000_001 }, { rfilename: "weights.safetensors", size: 3_000_000_000 }, { rfilename: "config.json", size: 12_000 }, { rfilename: "tokenizer.json", size: 8_000 }, { rfilename: "README.md", size: 900_000_000 }] };
+  const model = { id: "org/Test-GGUF", sha: "immutable-revision", pipeline_tag: "text-generation", config: { max_position_embeddings: 32768 }, siblings: [{ rfilename: "large.Q8.gguf", size: 8_000_000_000 }, { rfilename: "small.Q4_K_M.gguf", size: 4_000_000_001 }, { rfilename: "weights.safetensors", size: 3_000_000_000 }, { rfilename: "config.json", size: 12_000 }, { rfilename: "tokenizer.json", size: 8_000 }, { rfilename: "README.md", size: 900_000_000 }] };
   const ggufArtifacts = normalizeModels([model], "gguf"); const mlxArtifact = normalizeModels([model], "mlx")[0];
   assert.deepEqual(ggufArtifacts.map((artifact) => [artifact.filename, artifact.quantization, artifact.sizeBytes]), [["small.Q4_K_M.gguf", "Q4_K_M", 4_000_000_001], ["large.Q8.gguf", "Q8", 8_000_000_000]]);
   assert.equal(mlxArtifact.sizeBytes, 15_900_020_001);
   assert.equal(ggufArtifacts[0].pipelineTag, "text-generation");
   assert.equal(ggufArtifacts[0].revision, "immutable-revision");
+  assert.equal(ggufArtifacts[0].viewUrl, "https://huggingface.co/org/Test-GGUF/blob/immutable-revision/small.Q4_K_M.gguf");
+  assert.equal(ggufArtifacts[0].maxContextTokens, 32768);
   assert.equal(normalizeModels([{ id: "org/bad", siblings: [{ rfilename: "tiny.gguf", size: 1 }] }], "gguf").length, 0);
   assert.equal(normalizeModels([{ id: "org/unknown-tokenizer", siblings: [{ rfilename: "weights.safetensors", size: 3_000_000_000 }, { rfilename: "tokenizer.json" }] }], "mlx").length, 0);
   assert.equal(normalizeModels([{ id: "org/unknown-extra", siblings: [{ rfilename: "weights.safetensors", size: 3_000_000_000 }, { rfilename: "unrecognised.bin" }] }], "mlx").length, 0);
@@ -227,6 +231,18 @@ test("keeps multiple GGUF quantization variants from one model family", () => {
   const q8 = { ...gguf, id: "org/Coder-7B-GGUF/model.Q8_0.gguf", filename: "model.Q8_0.gguf", quantization: "Q8_0", sizeBytes: 8_000_000_000, sizeGb: 8, sourceUrl: "https://huggingface.co/org/Coder-7B-GGUF/resolve/main/model.Q8_0.gguf" };
   const ranked = rankArtifacts([q4, q8], mac);
   assert.deepEqual(ranked.map((item) => item.quantization).sort(), ["Q4_K_M", "Q8_0"]);
+  assert.equal(ranked[0].quantization, "Q8_0", "higher precision wins when both variants fit");
+});
+test("excludes known context-incompatible artifacts and explains unknown limits", () => {
+  const shortOnly = { ...gguf, maxContextTokens: 4096 };
+  const unknown = { ...gguf, id: "org/Unknown-context/model.gguf", modelId: "org/Unknown-context", maxContextTokens: undefined };
+  const excluded = rankArtifactsWithExplanations([shortOnly], { ...mac, context: "normal" });
+  assert.equal(excluded.recommendations.length, 0);
+  assert.equal(excluded.exclusions.insufficientContext, 1);
+  const result = rankArtifactsWithExplanations([unknown], { ...mac, context: "long" });
+  assert.equal(result.recommendations[0].explanation.fit.context.requestedTokens, 32768);
+  assert.equal(result.recommendations[0].explanation.fit.context.maxTokens, undefined);
+  assert.match(result.recommendations[0].explanation.rankingFactors.join(" "), /unavailable/i);
 });
 test("groups equivalent format conversions by base model family", () => {
   const ggufVariant = { ...gguf, baseModel: "Qwen/Qwen2.5-Coder-7B-Instruct", title: "Qwen2.5-Coder-7B-Instruct", modelId: "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF" };
@@ -286,8 +302,11 @@ test("cache coalesces cold refreshes and rejects invalid timestamps", async () =
 test("cold and completed refreshes mark already-expired catalogues stale", async () => {
   const now = Date.parse("2026-08-02T00:00:00Z");
   const expiredCatalogue = { items: [gguf], refreshedAt: "2026-08-01T00:00:00Z" };
-  const cold = new CatalogueCache(async () => expiredCatalogue, 1, () => now);
+  let coldCalls = 0;
+  const cold = new CatalogueCache(async () => { coldCalls += 1; return expiredCatalogue; }, 1, () => now, 60_000);
   assert.deepEqual(await cold.get(), { catalogue: expiredCatalogue, stale: true });
+  assert.deepEqual(await cold.get(), { catalogue: expiredCatalogue, stale: true });
+  assert.equal(coldCalls, 1, "a cold stale result also respects retry backoff");
 
   let release!: (catalogue: typeof expiredCatalogue) => void;
   const pending = new Promise<typeof expiredCatalogue>((resolve) => { release = resolve; });
@@ -329,6 +348,23 @@ test("failed background refreshes stay stale and respect retry backoff", async (
   assert.equal((await stale.get()).stale, true);
   assert.equal(staleCalls, 2);
 });
+test("resolved stale background refreshes also respect retry backoff", async () => {
+  let calls = 0; let now = Date.parse("2026-08-02T00:00:00Z");
+  const oldCatalogue = { items: [gguf], refreshedAt: "2026-08-01T00:00:00Z" };
+  const freshCatalogue = { items: [{ ...gguf, id: "org/Fresh-after-framework-stale/model.gguf" }], refreshedAt: "2026-08-02T00:00:00Z" };
+  const cache = new CatalogueCache(async () => { calls += 1; return calls === 1 ? oldCatalogue : freshCatalogue; }, 6 * 60 * 60 * 1000, () => now, 60_000);
+  (cache as unknown as { state: typeof oldCatalogue }).state = oldCatalogue;
+  assert.equal((await cache.get()).stale, true);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(calls, 1);
+  assert.equal((await cache.get()).catalogue, oldCatalogue);
+  assert.equal(calls, 1, "a stale framework result does not trigger another refresh during backoff");
+  now += 60_000;
+  assert.equal((await cache.get()).stale, true);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(calls, 2);
+  assert.equal((await cache.get()).catalogue, freshCatalogue);
+});
 test("failed cold refreshes respect retry backoff", async () => {
   let calls = 0;
   let now = 1000;
@@ -355,7 +391,7 @@ test("thirty-second cold-start deadline aborts requests and preserves the unavai
   assert.equal((await deadlineHandler(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify(mac) }))).status, 503);
 });
 test("API preserves status codes and returns typed input errors", async () => {
-  const response = { recommendations: [], exclusions: { insufficientDisk: 0, insufficientMemory: 0, invalidSize: 0, unsupportedFormat: 0, unsupportedArtifact: 0 }, refreshedAt: "2026-08-01T00:00:00Z", stale: true };
+  const response = { recommendations: [], exclusions: { insufficientDisk: 0, insufficientMemory: 0, insufficientContext: 0, invalidSize: 0, unsupportedFormat: 0, unsupportedArtifact: 0 }, refreshedAt: "2026-08-01T00:00:00Z", stale: true };
   const handler = createPostHandler(async () => response);
   const invalid = await handler(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify({ chip: "m4", memoryGb: 99, diskGb: 0, workload: "nope" }) }));
   assert.equal(invalid.status, 400); assert.ok((await invalid.json()).fieldErrors);
