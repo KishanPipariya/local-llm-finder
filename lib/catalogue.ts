@@ -164,7 +164,16 @@ export function normalizationExclusions(models: HubModel[], format: Artifact["fo
     const files = modelFiles(model);
     const matched = format === "gguf" ? files.filter((file) => /\.gguf$/i.test(file.rfilename)) : files;
     if (!matched.length) counts.unsupportedFormat = (counts.unsupportedFormat ?? 0) + 1;
-    else if (!normalizeModels([model], format).length) counts.invalidSize = (counts.invalidSize ?? 0) + 1;
+    else if (format === "gguf") {
+      // A GGUF file becomes its own recommendation, so account for every
+      // rejected file even when its repository has valid alternatives.
+      const invalidFiles = matched.filter((file) => !validSize(file.size)).length;
+      if (invalidFiles) counts.invalidSize = (counts.invalidSize ?? 0) + invalidFiles;
+    } else if (!normalizeModels([model], format).length) {
+      // MLX is downloaded as one repository snapshot, so its exclusion stays
+      // at repository level even when multiple files have invalid sizes.
+      counts.invalidSize = (counts.invalidSize ?? 0) + 1;
+    }
     return counts;
   }, {});
 }
@@ -197,7 +206,8 @@ export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeo
     // List responses contain filenames but no byte sizes. Fetch each selected
     // repository's blob metadata before normalizing, otherwise conservative size
     // validation would exclude every artifact. Both formats share one upstream
-    // limit so a mixed catalogue refresh never exceeds six detail requests.
+    // concurrency limit, so a mixed catalogue refresh has at most six detail
+    // requests in flight at once.
     const detailed = await mapWithConcurrency(
       [...ggufList.map((model) => ({ format: "gguf" as const, model })), ...mlxList.map((model) => ({ format: "mlx" as const, model }))],
       6,

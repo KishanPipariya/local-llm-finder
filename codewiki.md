@@ -191,7 +191,10 @@ explicit tie-breakers, so an upstream list's order cannot change a shortlist.
 
 The recommendation result also includes an `exclusions` count by reason. Counts
 include candidates rejected during Hugging Face normalization, but never expose
-the rejected artifact metadata. The
+the rejected artifact metadata. GGUF invalid-size exclusions are counted per
+file because each file is a separately recommendable artifact; MLX invalid-size
+exclusions are counted once per repository snapshot because MLX downloads the
+complete repository. The
 UI only exposes reasons with a non-zero count and offers safe next actions for
 disk, memory, unsupported-format, and invalid-size constraints. Invalid sizes
 remain excluded and are never shown as installable artifacts.
@@ -212,7 +215,7 @@ workloads can change the result.
 requests: popular GGUF repositories and repositories from `mlx-community`.
 Because those list responses contain filenames but not reliable byte sizes, it
 then obtains each selected repository's `blobs=true` metadata with a bounded
-global concurrency of six across both formats. A repository that disappears or
+global concurrency of six in-flight requests across both formats. A repository that disappears or
 fails during that second step is excluded; its unverified files are never
 recommended. Each request has a 12-second timeout, while a complete refresh has
 a 30-second deadline that aborts all outstanding work. A refresh-controller
@@ -263,8 +266,11 @@ version-controlled Husky hooks in `.husky/`. Both hooks explicitly use
 unit tests, and a production build); the longer Playwright/axe suite remains in
 `npm test` and the full `npm run verify` release check. The individual commands
 remain available, and Git's standard `--no-verify` option can bypass a hook
-when explicitly needed. There is no GitHub Actions verification workflow; local
-hooks are the project's verification gate.
+when explicitly needed. GitHub Actions is the repository verification gate: it
+runs on pull requests and pushes to `main`, using Node 24 with npm caching, and
+executes linting, coverage-gated unit tests, a production build, and the
+Playwright/axe accessibility suite. Husky remains local feedback; Git hooks can
+still be bypassed, but the CI checks cannot be bypassed through `--no-verify`.
 
 `npm test` includes
 both the Node test suite and the Playwright/axe accessibility suite; the latter
@@ -277,9 +283,9 @@ catalogue environment variable. Cleanup explicitly terminates and waits for the
 production server.
 
 `npm run test:unit` uses Node's built-in experimental test coverage report for
-the exercised server and domain modules. It enforces the current baseline of
-98.28% lines, 90.10% branches, and 95.74% functions; a regression below any
-threshold fails the command. Consequently, `npm run test:unit`,
+the exercised server and domain modules. It enforces whole-number gates of 98%
+lines, 92% branches, and 97% functions; a regression below any threshold fails
+the command. Consequently, `npm run test:unit`,
 `npm run verify:prepush`, `npm test`, and `npm run verify` print and enforce
 this coverage report. Browser-rendered pages and components are outside this
 unit-coverage scope.

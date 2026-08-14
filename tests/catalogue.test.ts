@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mapWithConcurrency, normalizeModels, parseHubModelList, retrieveCatalogue } from "../lib/catalogue";
+import { mapWithConcurrency, normalizationExclusions, normalizeModels, parseHubModelList, retrieveCatalogue } from "../lib/catalogue";
 
 const listedModel = { id: "org/Model-GGUF", siblings: [{ rfilename: "model.Q4_K_M.gguf", size: 4_000_000_000 }] };
 const listedMlxModel = { id: "mlx-community/Model", siblings: [{ rfilename: "weights.safetensors", size: 4_000_000_000 }, { rfilename: "config.json", size: 1_000 }, { rfilename: "tokenizer.json", size: 1_000 }] };
@@ -9,6 +9,33 @@ test("normalization discards malformed optional Hugging Face metadata", () => {
   assert.deepEqual(model.tags, ["code"]);
   assert.equal(model.downloads, undefined);
   assert.deepEqual(normalizeModels([model], "gguf").map((artifact) => artifact.sizeBytes), [4_000_000_000]);
+});
+
+test("GGUF exclusion counts track each invalid file in a mixed-validity repository", () => {
+  const model = {
+    id: "org/Mixed-GGUF",
+    siblings: [
+      { rfilename: "model.Q4_K_M.gguf", size: 4_000_000_000 },
+      { rfilename: "model.Q2_K.gguf", size: 99_999_999 },
+      { rfilename: "model.Q8_0.gguf" },
+      { rfilename: "README.md", size: 1_000 },
+    ],
+  };
+  assert.equal(normalizeModels([model], "gguf").length, 1);
+  assert.deepEqual(normalizationExclusions([model], "gguf"), { invalidSize: 2 });
+});
+
+test("MLX exclusion counts remain at repository snapshot level", () => {
+  const model = {
+    id: "mlx-community/Mixed-MLX",
+    siblings: [
+      { rfilename: "weights.safetensors", size: 4_000_000_000 },
+      { rfilename: "config.json" },
+      { rfilename: "tokenizer.json", size: 0 },
+    ],
+  };
+  assert.deepEqual(normalizeModels([model], "mlx"), []);
+  assert.deepEqual(normalizationExclusions([model], "mlx"), { invalidSize: 1 });
 });
 
 function upstream(options: { unavailableModel?: string } = {}) {
