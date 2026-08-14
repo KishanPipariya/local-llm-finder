@@ -21,16 +21,34 @@ export type HubModel = {
 };
 type UnknownRecord = Record<string, unknown>;
 
-const params = (value: unknown, text: string): number | undefined => {
-  const match = String(value ?? text).match(/(\d+(?:\.\d+)?)\s*[bB](?:illion)?\b/);
-  return match ? Number(match[1]) : undefined;
-};
+function params(value: unknown, text: string): number | undefined {
+  // Card metadata commonly uses either a small value in billions (7) or a raw
+  // parameter count (7_000_000_000); normalize both to the paramsB unit.
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) return value >= 1_000_000 ? value / 1e9 : value;
+  const parseText = (candidate: unknown) => {
+    const match = String(candidate ?? "").match(/(\d+(?:\.\d+)?)\s*[bB](?:illion)?\b/);
+    return match ? Number(match[1]) : undefined;
+  };
+  return parseText(value) ?? parseText(text);
+}
 const titleOf = (id: string) => id.split("/").at(-1)?.replace(/-(GGUF|MLX)$/i, "") ?? id;
 const validSize = (size: unknown): size is number => typeof size === "number" && Number.isSafeInteger(size) && size >= MIN_ARTIFACT_BYTES;
 const knownFileSize = (size: unknown): size is number => typeof size === "number" && Number.isSafeInteger(size) && size > 0;
 const isMlxWeightFile = (file: HubFile) => /(?:^|\/)[^/]+\.safetensors$/i.test(file.rfilename) && knownFileSize(file.size);
 const supportedPipelineTags = new Set(["text-generation", "text2text-generation", "conversational"]);
-const isSupportedTask = (model: HubModel) => !model.pipeline_tag || supportedPipelineTags.has(model.pipeline_tag);
+const knownNonTextPipelineTags = new Set([
+  "audio-classification",
+  "automatic-speech-recognition",
+  "depth-estimation",
+  "image-classification",
+  "image-segmentation",
+  "image-text-to-text",
+  "object-detection",
+  "text-to-image",
+  "text-to-speech",
+  "video-classification",
+]);
+const isSupportedTask = (model: HubModel) => !model.pipeline_tag || supportedPipelineTags.has(model.pipeline_tag) || !knownNonTextPipelineTags.has(model.pipeline_tag);
 const isGgufShard = (file: HubFile) => /(?:^|[-_.])\d{5}-of-\d{5}\.gguf$/i.test(file.rfilename);
 const isGgufAuxiliary = (file: HubFile) => /(?:^|[._/-])(?:mmproj|imatrix|adapter|lora|tokenizer|vocab)(?:[._/-]|$)/i.test(file.rfilename);
 const isStandaloneGguf = (file: HubFile) => !isGgufShard(file) && !isGgufAuxiliary(file);

@@ -11,6 +11,12 @@ test("normalization discards malformed optional Hugging Face metadata", () => {
   assert.deepEqual(normalizeModels([model], "gguf").map((artifact) => artifact.sizeBytes), [4_000_000_000]);
 });
 
+test("normalizes numeric parameter metadata into billions", () => {
+  const raw = { id: "org/Typed-GGUF", siblings: [{ rfilename: "model.Q4.gguf", size: 1_000_000_000 }] };
+  assert.equal(normalizeModels([{ ...raw, cardData: { params: 7_000_000_000 } }], "gguf")[0].paramsB, 7);
+  assert.equal(normalizeModels([{ ...raw, cardData: { params: 7 } }], "gguf")[0].paramsB, 7);
+});
+
 test("GGUF exclusion counts track each invalid file in a mixed-validity repository", () => {
   const model = {
     id: "org/Mixed-GGUF",
@@ -42,6 +48,9 @@ test("catalogue excludes non-chat tasks and non-standalone GGUF files", () => {
   const multimodal = { id: "org/Vision-GGUF", pipeline_tag: "image-text-to-text", siblings: [{ rfilename: "vision.gguf", size: 4_000_000_000 }] };
   assert.deepEqual(normalizeModels([multimodal], "gguf"), []);
   assert.deepEqual(normalizationExclusions([multimodal], "gguf"), { unsupportedArtifact: 1 });
+
+  const unknownTask = { id: "org/UnknownTask-GGUF", pipeline_tag: "future-text-task", siblings: [{ rfilename: "model.Q4.gguf", size: 4_000_000_000 }] };
+  assert.equal(normalizeModels([unknownTask], "gguf").length, 1, "unknown task metadata stays eligible and neutral");
 
   const split = {
     id: "org/Split-GGUF",

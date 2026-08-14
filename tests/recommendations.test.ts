@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { buildGuidance, estimateMemoryGb, rankArtifacts, rankArtifactsWithExplanations, runtimeEligibility, type Artifact } from "../lib/recommendations";
 import { chipProfiles, runtimes, validateConfig, type MacConfig } from "../lib/hardware";
@@ -77,7 +78,23 @@ test("keeps fit tied to memory but changes pace and ranking by chip bandwidth", 
   assert.equal(lowBandwidth[0].title, "Chat 3B");
   assert.equal(highBandwidth[0].title, "Chat 8B");
 });
-test("names the exact GGUF file in links and runtime guidance", () => { const recommendation = rankArtifacts([gguf], mac)[0]; assert.equal(recommendation.sourceUrl, gguf.sourceUrl); assert.match(recommendation.guidance.find((guide) => guide.runtime === "llama.cpp")!.command, /model\.Q4_K_M\.gguf/); });
+test("names the exact GGUF file in links and runtime guidance", () => {
+  const recommendation = rankArtifacts([gguf], mac)[0];
+  assert.equal(recommendation.sourceUrl, gguf.sourceUrl);
+  const llama = recommendation.guidance.find((guide) => guide.runtime === "llama.cpp")!.command;
+  assert.match(llama, /--hf-repo 'org\/Coder-7B-GGUF' --hf-file 'model\.Q4_K_M\.gguf'/);
+  assert.doesNotMatch(llama, /-hf 'org\/Coder-7B-GGUF\/model\.Q4_K_M\.gguf'/);
+});
+
+test("shell-quotes catalogue filenames and keeps nested paths usable", () => {
+  const hostile = { ...gguf, filename: "nested/a'; printf INJECTED; 'b.gguf", sourceUrl: "https://huggingface.co/org/Coder-7B-GGUF/resolve/main/nested/a%27%3B%20printf%20INJECTED%3B%20%27b.gguf" };
+  for (const runtime of ["Ollama", "LM Studio"] as const) {
+    const command = buildGuidance(hostile, [runtime])[0].command;
+    assert.match(command, /--fail --location --create-dirs/);
+    assert.match(command, /a'\"'\"'; printf INJECTED; '\"'\"'b\.gguf/);
+    assert.equal(spawnSync("sh", ["-n", "-c", command]).status, 0, `${runtime} guidance remains valid shell syntax`);
+  }
+});
 test("uses Hugging Face GGUF import guidance for Ollama", () => {
   const guidance = buildGuidance(gguf, ["Ollama"])[0].command;
   assert.ok(guidance.includes(gguf.sourceUrl));
@@ -88,7 +105,7 @@ test("uses Hugging Face GGUF import guidance for Ollama", () => {
 test("uses exact-file LM Studio and mlx-lm installation guidance", () => {
   const lmStudio = buildGuidance(gguf, ["LM Studio"])[0].command;
   assert.ok(lmStudio.includes(gguf.sourceUrl));
-  assert.match(lmStudio, /curl -L/);
+  assert.match(lmStudio, /curl --fail --location --create-dirs/);
   assert.match(lmStudio, /lms import 'model\.Q4_K_M\.gguf'/);
   assert.doesNotMatch(lmStudio, /lms get/);
 

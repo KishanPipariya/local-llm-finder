@@ -154,8 +154,10 @@ artifacts.
   and llama.cpp. Its Ollama guidance remains the explicit
   download-and-`ollama create` import recipe; LM Studio guidance downloads the
   exact verified GGUF source URL and runs `lms import` on that downloaded file;
-  arbitrary Hugging Face files never use `ollama pull` or a catalogue search
-  command.
+  llama.cpp guidance uses its separate repository and exact-file flags. Download
+  recipes use strict curl failure handling, create nested output directories,
+  and shell-quote catalogue-controlled values; arbitrary Hugging Face files
+  never use `ollama pull` or a catalogue search command.
 - MLX: require at least one positively sized `.safetensors` weight file and a
   supported text-generation pipeline, then sum every file in the repository
   snapshot—not only recognised runtime assets.
@@ -194,7 +196,9 @@ runtimes, workload category, and pace inputs), ranking contributors, and its
 normalized family key. Hugging Face `pipeline_tag` is retained alongside titles
 and tags: text generation, text-to-text generation, instruct/chat, and coding
 metadata add a bounded workload preference. Missing or unknown task metadata
-stays eligible and neutral. Workload metadata is presented only as
+stays eligible and neutral; only an explicit known non-text task is excluded.
+Numeric parameter metadata is normalized to billions whether the card supplies
+a small billions value or a large raw count. Workload metadata is presented only as
 coding-oriented, general chat, or mixed—not as a capability benchmark. Ranking
 accepts an optional clock value for deterministic callers and tests; normal
 requests use `Date.now()`. Equal scores use stable artifact identity fields as
@@ -285,8 +289,9 @@ unit tests, and a production build); the longer Playwright/axe suite remains in
 remain available, and Git's standard `--no-verify` option can bypass a hook
 when explicitly needed. GitHub Actions is the repository verification gate: it
 runs on pull requests and pushes to `main`, using Node 24 with npm caching, and
-executes linting, coverage-gated unit tests, a production build, and the
-Playwright/axe accessibility suite. Husky remains local feedback; Git hooks can
+executes a production-dependency audit, linting, coverage-gated unit tests, the
+production build (as part of the accessibility suite), and the Playwright/axe
+checks. Husky remains local feedback; Git hooks can
 still be bypassed, but the CI checks cannot be bypassed through `--no-verify`.
 
 `npm test` includes

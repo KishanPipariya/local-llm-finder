@@ -142,11 +142,10 @@ function emptyExclusions(): ExclusionSummary {
 }
 
 function shellQuote(value: string) {
-  return `'${value.replaceAll("'", "'\\\"'\\\"'")}'`;
+  return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
 
 export function buildGuidance(item: Artifact, runtimes: Recommendation["runtimes"]): Recommendation["guidance"] {
-  const artifact = item.filename ? `${item.modelId}/${item.filename}` : item.modelId;
   const filename = item.filename ?? "model.gguf";
   const revision = item.revision ?? "main";
   const localModelDirectory = item.modelId.replace(/[^a-zA-Z0-9._-]+/g, "-");
@@ -155,9 +154,9 @@ export function buildGuidance(item: Artifact, runtimes: Recommendation["runtimes
     : `hf auth login && hf download ${shellQuote(item.modelId)} --revision ${shellQuote(revision)} --local-dir ${shellQuote(localModelDirectory)}`;
   return runtimes.map((runtime) => {
     if (!item.gated) {
-      if (runtime === "Ollama") return { runtime, command: `curl -L ${shellQuote(item.sourceUrl)} -o ${shellQuote(filename)} && printf '%s\\n' ${shellQuote(`FROM ./${filename}`)} > Modelfile && ollama create local-model -f Modelfile && ollama run local-model` };
-      if (runtime === "LM Studio") return { runtime, command: `curl -L ${shellQuote(item.sourceUrl)} -o ${shellQuote(filename)} && lms import ${shellQuote(filename)}` };
-      if (runtime === "llama.cpp") return { runtime, command: `llama-cli -hf ${shellQuote(artifact)} -p "Hello"` };
+      if (runtime === "Ollama") return { runtime, command: `curl --fail --location --create-dirs ${shellQuote(item.sourceUrl)} --output ${shellQuote(filename)} && printf '%s\\n' ${shellQuote(`FROM ./${filename}`)} > Modelfile && ollama create local-model -f Modelfile && ollama run local-model` };
+      if (runtime === "LM Studio") return { runtime, command: `curl --fail --location --create-dirs ${shellQuote(item.sourceUrl)} --output ${shellQuote(filename)} && lms import ${shellQuote(filename)}` };
+      if (runtime === "llama.cpp") return { runtime, command: `llama-cli --hf-repo ${shellQuote(item.modelId)}${item.filename ? ` --hf-file ${shellQuote(item.filename)}` : ""} -p "Hello"` };
       return { runtime, command: `uvx --from mlx-lm mlx_lm.generate --model ${shellQuote(item.modelId)} --prompt "Hello"` };
     }
     if (runtime === "Ollama") return { runtime, command: `${authenticatedDownload} && printf '%s\\n' ${shellQuote(`FROM ./${filename}`)} > Modelfile && ollama create local-model -f Modelfile && ollama run local-model` };

@@ -15,7 +15,7 @@
     "test:a11y": "npm run build && tsx --test --test-concurrency=4 tests/accessibility.test.ts",
     "lint": "npm run check:node && eslint . --ignore-pattern dist --ignore-pattern .next",
     "verify:prepush": "npm run lint && npm run test:unit && npm run build",
-    "verify": "npm run lint && npm test && npm run build",
+    "verify": "npm run lint && npm test",
     "smoke:deploy": "npm run check:node && node ./scripts/deploy-smoke.mjs",
     "prepare": "husky"
   },
