@@ -63,15 +63,32 @@ test("validates optional runtime and context preferences without requiring them 
   assert.equal(validateConfig({ ...mac, runtime: "other" }).valid, false);
   assert.equal(validateConfig({ ...mac, context: "huge" }).valid, false);
 });
-test("enforces exact disk boundaries and estimates from exact bytes", () => { assert.equal(rankArtifacts([gguf], { ...mac, diskGb: 4.999999999 }).length, 0); assert.equal(rankArtifacts([gguf], { ...mac, diskGb: 5 }).length, 1); assert.ok(estimateMemoryGb({ ...gguf, sizeGb: 1 }) > 5); });
+test("enforces operational disk headroom and estimates from exact bytes", () => { assert.equal(rankArtifacts([gguf], { ...mac, diskGb: 5.999999999 }).length, 0); assert.equal(rankArtifacts([gguf], { ...mac, diskGb: 6 }).length, 1); assert.ok(estimateMemoryGb({ ...gguf, sizeGb: 1 }) > 5); });
 test("ranks coding models and carries gated and licence warnings plus runtime commands", () => { const generic = { ...gguf, id: "org/Chat-8B-GGUF", modelId: "org/Chat-8B-GGUF", title: "Chat 8B", paramsB: 8, tags: [] }; const gated = { ...gguf, gated: true, licence: "apache-2.0" }; const ranked = rankArtifacts([generic, gated], mac); assert.equal(ranked[0].title, "Coder 7B"); assert.ok(ranked[0].notes.some((note) => note.startsWith("Gated"))); assert.ok(ranked[0].notes.some((note) => note.startsWith("Licence: apache-2.0"))); assert.ok(ranked[0].guidance.some((g) => g.runtime === "llama.cpp" && g.command.includes("hf auth login") && g.command.includes("-m"))); });
 test("uses Hugging Face task metadata as a bounded workload preference", () => {
   const coding = { ...gguf, id: "org/Code-GGUF/file.gguf", modelId: "org/Code-GGUF", title: "Plain model", tags: ["coding"], pipelineTag: undefined };
-  const chat = { ...gguf, id: "org/Chat-GGUF/file.gguf", modelId: "org/Chat-GGUF", title: "Plain model", tags: [], pipelineTag: "text2text-generation" };
+  const chat = { ...gguf, id: "org/Chat-GGUF/file.gguf", modelId: "org/Chat-GGUF", title: "Plain model", tags: ["chat"], pipelineTag: "text2text-generation" };
   const unknown = { ...gguf, id: "org/Unknown-GGUF/file.gguf", modelId: "org/Unknown-GGUF", title: "Plain model", tags: [], pipelineTag: undefined };
   assert.equal(rankArtifacts([unknown, chat, coding], { ...mac, workload: "coding" }, Date.parse("2026-08-06T00:00:00Z"))[0].id, coding.id);
   assert.equal(rankArtifacts([unknown, coding, chat], { ...mac, workload: "chat" }, Date.parse("2026-08-06T00:00:00Z"))[0].id, chat.id);
   assert.equal(rankArtifacts([unknown], mac, Date.parse("2026-08-06T00:00:00Z")).length, 1, "manually supplied artifacts without task metadata remain neutral");
+});
+test("does not treat generic text generation as chat suitability", () => {
+  const coding = { ...gguf, id: "org/Coder-GGUF/file.gguf", modelId: "org/Coder-GGUF", title: "Coder", tags: ["code"], pipelineTag: "text-generation" };
+  const chat = { ...gguf, id: "org/Assistant-GGUF/file.gguf", modelId: "org/Assistant-GGUF", title: "Assistant", tags: [], pipelineTag: "text-generation" };
+  const ranked = rankArtifacts([coding, chat], { ...mac, workload: "chat" }, Date.parse("2026-08-06T00:00:00Z"));
+  assert.equal(ranked[0].id, chat.id);
+  assert.equal(ranked.find((item) => item.id === coding.id)?.explanation.fit.workload.category, "coding-oriented");
+});
+test("recognizes explicit conversational and chat-template metadata", () => {
+  const conversational = { ...gguf, title: "Plain model", tags: [], pipelineTag: "conversational" };
+  const templated = { ...gguf, id: "org/Template-GGUF/model.gguf", modelId: "org/Template-GGUF", title: "Plain model", tags: [], pipelineTag: "text-generation", chatTemplate: true };
+  assert.equal(rankArtifacts([conversational], { ...mac, workload: "balanced" })[0].explanation.fit.workload.category, "general chat");
+  assert.equal(rankArtifacts([templated], { ...mac, workload: "balanced" })[0].explanation.fit.workload.category, "general chat");
+});
+test("keeps malformed update timestamps neutral", () => {
+  const malformed = { ...gguf, updatedAt: "not-a-date" };
+  assert.equal(rankArtifacts([malformed], mac)[0].explanation.rankingFactors.some((factor) => factor.includes("freshness")), true);
 });
 test("explains combined and unknown workload metadata accurately", () => {
   const unknown = { ...gguf, id: "org/Unknown-GGUF/file.gguf", modelId: "org/Unknown-GGUF", title: "Unknown", tags: [], pipelineTag: undefined };
@@ -174,21 +191,21 @@ test("keeps non-gated runtime guidance unchanged", () => {
   assert.doesNotMatch(buildGuidance(mlx, ["MLX"])[0].command, /hf auth login/);
 });
 test("warns about near disk and memory limits without changing eligibility", () => {
-  const diskNearLimit = rankArtifacts([{ ...gguf, sizeBytes: 9_000_000_000, sizeGb: 9 }], { ...mac, diskGb: 10, memoryGb: 16 })[0];
+  const diskNearLimit = rankArtifacts([{ ...gguf, sizeBytes: 9_000_000_000, sizeGb: 9 }], { ...mac, diskGb: 11.5, memoryGb: 16 })[0];
   assert.ok(diskNearLimit.notes.some((note) => note.startsWith("Near disk limit")));
   const memoryNearLimit = rankArtifacts([{ ...gguf, sizeBytes: 12_000_000_000, sizeGb: 12, paramsB: undefined }], { ...mac, diskGb: 20, memoryGb: 16 })[0];
   assert.ok(memoryNearLimit, "an artifact below the existing memory threshold remains eligible");
   assert.ok(memoryNearLimit.notes.some((note) => note.startsWith("Near memory limit")));
 });
 test("returns typed fit explanations and actionable exclusion categories", () => {
-  const tooLarge = { ...gguf, id: "org/Large-GGUF/file.gguf", modelId: "org/Large-GGUF", sizeBytes: 13_000_000_000, sizeGb: 13 };
-  const tooHungry = { ...gguf, id: "org/Memory-GGUF/file.gguf", modelId: "org/Memory-GGUF", sizeBytes: 11_500_000_000, sizeGb: 11.5, paramsB: 100 };
+  const tooLarge = { ...gguf, id: "org/Large-GGUF/file.gguf", modelId: "org/Large-GGUF", sizeBytes: 17_000_000_000, sizeGb: 17 };
+  const tooHungry = { ...gguf, id: "org/Memory-GGUF/file.gguf", modelId: "org/Memory-GGUF", sizeBytes: 14_500_000_000, sizeGb: 14.5, paramsB: 100 };
   const invalid = { ...gguf, id: "org/Invalid-GGUF/file.gguf", modelId: "org/Invalid-GGUF", sizeBytes: 0, sizeGb: 0 };
-  const result = rankArtifactsWithExplanations([gguf, tooLarge, tooHungry, invalid], mac);
+  const result = rankArtifactsWithExplanations([gguf, tooLarge, tooHungry, invalid], { ...mac, diskGb: 20 });
   assert.equal(result.exclusions.insufficientDisk, 1);
   assert.equal(result.exclusions.insufficientMemory, 1);
   assert.equal(result.exclusions.invalidSize, 1);
-  assert.equal(result.recommendations[0].explanation.fit.disk.availableBytes, 12_000_000_000);
+  assert.equal(result.recommendations[0].explanation.fit.disk.availableBytes, 20_000_000_000);
   assert.equal(result.recommendations[0].explanation.fit.memory.assumption.includes("normal-context"), true);
   assert.equal(result.recommendations[0].explanation.fit.workload.category, "coding-oriented");
   assert.ok(result.recommendations[0].explanation.rankingFactors.length >= 3);
@@ -210,6 +227,14 @@ test("keeps multiple GGUF quantization variants from one model family", () => {
   const q8 = { ...gguf, id: "org/Coder-7B-GGUF/model.Q8_0.gguf", filename: "model.Q8_0.gguf", quantization: "Q8_0", sizeBytes: 8_000_000_000, sizeGb: 8, sourceUrl: "https://huggingface.co/org/Coder-7B-GGUF/resolve/main/model.Q8_0.gguf" };
   const ranked = rankArtifacts([q4, q8], mac);
   assert.deepEqual(ranked.map((item) => item.quantization).sort(), ["Q4_K_M", "Q8_0"]);
+});
+test("groups equivalent format conversions by base model family", () => {
+  const ggufVariant = { ...gguf, baseModel: "Qwen/Qwen2.5-Coder-7B-Instruct", title: "Qwen2.5-Coder-7B-Instruct", modelId: "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF" };
+  const mlxVariant = { ...mlx, title: "Qwen2.5-Coder-7B-Instruct-4bit", modelId: "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit" };
+  const alternative = { ...gguf, id: "org/Alternative-7B-GGUF/model.gguf", modelId: "org/Alternative-7B-GGUF", title: "Alternative 7B" };
+  const ranked = rankArtifacts([ggufVariant, mlxVariant, alternative], { ...mac, runtime: undefined });
+  assert.notEqual(ranked[0].explanation.familyKey, ranked[1].explanation.familyKey);
+  assert.equal(ranked[0].explanation.familyKey, ranked[2].explanation.familyKey);
 });
 test("gives distinct model families priority over additional variants", () => {
   const familyVariant = (id: string, quantization: string, sizeBytes: number) => ({ ...gguf, id, modelId: "org/Popular-7B-GGUF", title: "Popular 7B", quantization, filename: `${quantization}.gguf`, sizeBytes, sizeGb: sizeBytes / 1e9, downloads: 100_000, tags: [] });

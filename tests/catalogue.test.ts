@@ -1,20 +1,58 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { interleaveUnique, mapWithConcurrency, normalizationExclusions, normalizeModels, parseHubModelList, retrieveCatalogue } from "../lib/catalogue";
+import { getCatalogue, interleaveUnique, mapWithConcurrency, normalizationExclusions, normalizeHubModel, normalizeModels, parseHubModelList, retrieveCatalogue } from "../lib/catalogue";
 
 const listedModel = { id: "org/Model-GGUF", siblings: [{ rfilename: "model.Q4_K_M.gguf", size: 4_000_000_000 }] };
 const listedMlxModel = { id: "mlx-community/Model", siblings: [{ rfilename: "weights.safetensors", size: 4_000_000_000 }, { rfilename: "config.json", size: 1_000 }, { rfilename: "tokenizer.json", size: 1_000 }] };
 test("normalization discards malformed optional Hugging Face metadata", () => {
-  const [model] = parseHubModelList([{ ...listedModel, downloads: "many", lastModified: 42, gated: { value: true }, tags: ["code", 42], pipeline_tag: ["text-generation"], cardData: { license: 3, params: {} }, siblings: [{ rfilename: "model.Q4_K_M.gguf", size: "large" }, listedModel.siblings[0], { rfilename: 42, size: 5 }] }]);
+  const [model] = parseHubModelList([{ ...listedModel, downloads: "many", lastModified: 42, gated: { value: true }, tags: ["code", 42], pipeline_tag: ["text-generation"], gguf: { total: "large", chat_template: 4 }, safetensors: { total: "large", parameters: { BF16: "large" } }, cardData: { license: 3, params: {}, base_model: ["base/model"] }, siblings: [{ rfilename: "model.Q4_K_M.gguf", size: "large" }, listedModel.siblings[0], { rfilename: 42, size: 5 }] }]);
   assert.deepEqual(model.tags, ["code"]);
   assert.equal(model.downloads, undefined);
+  assert.equal(model.cardData?.base_model, "base/model");
+  assert.equal(model.gguf, undefined);
+  assert.equal(model.safetensors, undefined);
   assert.deepEqual(normalizeModels([model], "gguf").map((artifact) => artifact.sizeBytes), [4_000_000_000]);
+  assert.equal(normalizeHubModel(null), undefined);
+  assert.equal(normalizeHubModel({}), undefined);
+  assert.deepEqual(normalizeHubModel({ id: "org/NoCard", cardData: null, siblings: [{ rfilename: "model.gguf" }] })?.siblings, [{ rfilename: "model.gguf" }]);
 });
 
 test("normalizes numeric parameter metadata into billions", () => {
   const raw = { id: "org/Typed-GGUF", siblings: [{ rfilename: "model.Q4.gguf", size: 1_000_000_000 }] };
   assert.equal(normalizeModels([{ ...raw, cardData: { params: 7_000_000_000 } }], "gguf")[0].paramsB, 7);
   assert.equal(normalizeModels([{ ...raw, cardData: { params: 7 } }], "gguf")[0].paramsB, 7);
+});
+
+test("normalizes standard Hugging Face GGUF metadata", () => {
+  const model = {
+    id: "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF",
+    gguf: { total: 7_615_616_512, chat_template: "{{ messages }}" },
+    cardData: { base_model: "Qwen/Qwen2.5-Coder-7B-Instruct" },
+    siblings: [{ rfilename: "qwen.Q4_K_M.gguf", size: 4_000_000_000 }],
+  };
+  const [artifact] = normalizeModels([model], "gguf");
+  assert.equal(artifact.paramsB, 7.615616512);
+  assert.equal(artifact.baseModel, "Qwen/Qwen2.5-Coder-7B-Instruct");
+  assert.equal(artifact.chatTemplate, true);
+});
+
+test("falls back to standard parameter metadata when a custom card value is implausible", () => {
+  const [artifact] = normalizeModels([{
+    id: "org/Qwen-7B-GGUF",
+    gguf: { total: 7_000_000_000 },
+    cardData: { params: "999B" },
+    siblings: [{ rfilename: "qwen.Q4_K_M.gguf", size: 4_000_000_000 }],
+  }], "gguf");
+  assert.equal(artifact.paramsB, 7);
+});
+
+test("normalizes standard safetensors parameter metadata for MLX repositories", () => {
+  const [artifact] = normalizeModels([{
+    id: "mlx-community/Qwen2.5-7B-Instruct-4bit",
+    safetensors: { parameters: { BF16: 7_000_000_000 } },
+    siblings: [{ rfilename: "weights.safetensors", size: 4_000_000_000 }, { rfilename: "config.json", size: 1_000 }],
+  }], "mlx");
+  assert.equal(artifact.paramsB, 7);
 });
 
 test("GGUF exclusion counts track each invalid file in a mixed-validity repository", () => {
@@ -84,6 +122,10 @@ function upstream(options: { unavailableModel?: string } = {}) {
 test("catalogue refresh fetches blob metadata for every listed repository", async () => {
   const catalogue = await retrieveCatalogue(upstream() as typeof fetch);
   assert.deepEqual(catalogue.items.map((item) => item.format).sort(), ["gguf", "mlx"]);
+});
+
+test("framework cache adapter is isolated from the unit-test runtime", async () => {
+  await assert.rejects(getCatalogue(), /cacheComponents/);
 });
 
 test("catalogue refresh uses blob metadata, rejects incomplete format feeds, and rejects failed lists", async () => {

@@ -24,7 +24,7 @@ You can also explore local-model tools and catalogues directly:
 - Complete, shareable GET links and a server-rendered form that work without JavaScript.
 - Validated Apple Silicon chip and unified-memory combinations.
 - Hugging Face GGUF recommendations for Ollama, LM Studio, and llama.cpp, plus MLX recommendations for MLX.
-- A server-side Hugging Face catalogue with a shared six-hour refresh cache, six-hour local cache, and stale fallback.
+- A server-side Hugging Face catalogue with a six-hour framework refresh cache, six-hour local cache, and stale fallback.
 
 ## Request and data flow
 
@@ -58,15 +58,15 @@ before the runtime-specific import command.
 
 ## Catalogue refresh and fallback
 
-The complete server-side catalogue refresh is shared through Next.js's
-six-hour persistent cache, so source data can be up to six hours old. Each process
+The complete server-side catalogue refresh uses Next.js Cache Components with a
+six-hour revalidation interval, so source data can be up to six hours old. Each process
 also keeps its own six-hour `CatalogueCache`: it coalesces requests, serves the
 last valid result as stale during a refresh or outage, marks an already-expired
 refresh result as stale, and waits five minutes before retrying a failed refresh.
 If neither cache has a valid catalogue, the GET flow shows its temporary error
 and the API returns `503`.
 
-Each shared refresh uses four Hugging Face `full=true` list responses (20 popular
+Each framework-cached refresh uses four Hugging Face `full=true` list responses (20 popular
 and 20 recently updated GGUF repositories, plus the same two samples from
 `mlx-community`), then requests each selected
 repository's `blobs=true` metadata before normalizing it. There are no

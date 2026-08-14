@@ -1,6 +1,6 @@
 import { CatalogueCache, type Catalogue } from "./catalogue-cache";
 import type { Artifact, ExclusionSummary } from "./recommendations";
-import { unstable_cache } from "next/cache";
+import { cacheLife } from "next/cache";
 import { fetchJson, mapWithConcurrency, type FetchLike, REFRESH_TIMEOUT_MS } from "./catalogue-request";
 
 const MIN_ARTIFACT_BYTES = 100_000_000;
@@ -8,6 +8,8 @@ export { REFRESH_TIMEOUT_MS } from "./catalogue-request";
 const HUB_BASE = "https://huggingface.co/api/models";
 
 export type HubFile = { rfilename: string; size?: number };
+type HubGguf = { total?: number; chat_template?: string };
+type HubSafetensors = { total?: number; parameters?: Record<string, number> };
 export type HubModel = {
   id: string;
   sha?: string;
@@ -16,7 +18,9 @@ export type HubModel = {
   gated?: boolean | string;
   tags?: string[];
   pipeline_tag?: string;
-  cardData?: { license?: string; model_name?: string; params?: string | number };
+  gguf?: HubGguf;
+  safetensors?: HubSafetensors;
+  cardData?: { license?: string; model_name?: string; params?: string | number; base_model?: string };
   siblings?: HubFile[];
 };
 type UnknownRecord = Record<string, unknown>;
@@ -80,9 +84,38 @@ function normalizeCardData(value: unknown): HubModel["cardData"] | undefined {
   const modelName = asString(cardData.model_name);
   const rawParams = cardData.params;
   const params = typeof rawParams === "string" || typeof rawParams === "number" ? rawParams : undefined;
-  return license === undefined && modelName === undefined && params === undefined
+  const baseModelValue = cardData.base_model;
+  const baseModel = typeof baseModelValue === "string"
+    ? baseModelValue.trim() || undefined
+    : Array.isArray(baseModelValue)
+      ? baseModelValue.find((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0)?.trim()
+      : undefined;
+  return license === undefined && modelName === undefined && params === undefined && baseModel === undefined
     ? undefined
-    : { license, model_name: modelName, params };
+    : { license, model_name: modelName, params, base_model: baseModel };
+}
+
+function normalizeGguf(value: unknown): HubModel["gguf"] | undefined {
+  const gguf = asRecord(value);
+  if (!gguf) return undefined;
+  const total = asFiniteNumber(gguf.total);
+  const chatTemplate = asString(gguf.chat_template);
+  return total === undefined && chatTemplate === undefined ? undefined : { total, chat_template: chatTemplate };
+}
+
+function normalizeSafetensors(value: unknown): HubModel["safetensors"] | undefined {
+  const safetensors = asRecord(value);
+  if (!safetensors) return undefined;
+  const total = asFiniteNumber(safetensors.total);
+  const rawParameters = asRecord(safetensors.parameters);
+  const parsedParameters = rawParameters
+    ? Object.fromEntries(Object.entries(rawParameters).flatMap(([key, candidate]) => {
+      const parsed = asFiniteNumber(candidate);
+      return parsed === undefined ? [] : [[key, parsed]];
+    }))
+    : undefined;
+  const parameters = parsedParameters && Object.keys(parsedParameters).length > 0 ? parsedParameters : undefined;
+  return total === undefined && !parameters ? undefined : { total, parameters };
 }
 
 export function normalizeHubModel(value: unknown): HubModel | undefined {
@@ -107,6 +140,8 @@ export function normalizeHubModel(value: unknown): HubModel | undefined {
     gated,
     tags,
     pipeline_tag: pipelineTag,
+    gguf: normalizeGguf(model.gguf),
+    safetensors: normalizeSafetensors(model.safetensors),
     cardData: normalizeCardData(model.cardData),
     siblings,
   };
@@ -148,6 +183,13 @@ function plausibleParamsB(value: unknown, sizeBytes: number): number | undefined
   return candidate <= Math.max(1, sizeBytes / 50_000_000) ? candidate : undefined;
 }
 
+function modelParamCandidates(model: HubModel): unknown[] {
+  // Hugging Face exposes GGUF parameter counts in `gguf.total`; cardData.params
+  // is an optional custom model-card field and is absent for many real repos.
+  const safetensorsTotal = model.safetensors?.total ?? (model.safetensors?.parameters ? Object.values(model.safetensors.parameters).reduce((sum, value) => sum + value, 0) : undefined);
+  return [model.cardData?.params, model.gguf?.total, safetensorsTotal, model.cardData?.base_model, model.id];
+}
+
 export function normalizeModels(models: HubModel[], format: Artifact["format"]): Artifact[] {
   return models.flatMap((model) => {
     if (!isSupportedTask(model)) return [];
@@ -171,7 +213,9 @@ export function normalizeModels(models: HubModel[], format: Artifact["format"]):
         format,
         sizeBytes: artifactSize,
         sizeGb: Math.round((artifactSize / 1e9) * 10) / 10,
-        paramsB: plausibleParamsB(model.cardData?.params, artifactSize),
+        paramsB: modelParamCandidates(model)
+          .map((candidate) => plausibleParamsB(candidate, artifactSize))
+          .find((candidate): candidate is number => candidate !== undefined),
         quantization: filename ? quantizationOf(filename) : undefined,
         downloads: model.downloads !== undefined && model.downloads >= 0 ? model.downloads : 0,
         updatedAt: typeof model.lastModified === "string" ? model.lastModified : new Date(0).toISOString(),
@@ -179,6 +223,8 @@ export function normalizeModels(models: HubModel[], format: Artifact["format"]):
         gated: Boolean(model.gated),
         tags: model.tags ?? [],
         pipelineTag: model.pipeline_tag,
+        baseModel: model.cardData?.base_model,
+        chatTemplate: Boolean(model.gguf?.chat_template),
         repositoryUrl: repoUrl(model.id),
         sourceUrl: filename ? fileUrl(model.id, filename, model.sha) : revisionUrl(model.id, model.sha),
         revision: model.sha,
@@ -301,11 +347,11 @@ export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeo
   }
 }
 
-const persistentCatalogueRefresh = unstable_cache(
-  retrieveCatalogue,
-  ["mac-local-llm-finder", "catalogue-refresh", "v1"],
-  { revalidate: 6 * 60 * 60 },
-);
+async function cachedCatalogueRefresh(): Promise<Catalogue> {
+  "use cache";
+  cacheLife({ stale: 5 * 60, revalidate: 6 * 60 * 60, expire: 12 * 60 * 60 });
+  return retrieveCatalogue();
+}
 
-const cache = new CatalogueCache(persistentCatalogueRefresh);
+const cache = new CatalogueCache(cachedCatalogueRefresh);
 export const getCatalogue = () => cache.get();

@@ -2,8 +2,6 @@ import { getRecommendations } from "@/lib/recommendation-service";
 import { catalogueUnavailableMessage } from "@/lib/request";
 import { handleRecommendationPost } from "@/lib/recommendation-request";
 
-export const runtime = "nodejs";
-
 export function createPostHandler(get = getRecommendations) {
   return async function POST(request: Request) {
     const result = await handleRecommendationPost(request, get, catalogueUnavailableMessage);

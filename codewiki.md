@@ -23,7 +23,9 @@ Browser POST /api/recommendations (same configuration JSON)
 ```
 
 `app/page.tsx` is intentionally a server component. Its query parameters make
-the page request-time rendered. The form in `FinderForm` uses `method="get"`,
+the page request-time rendered; it explicitly opts out of instant prerendering
+so the query-bound GET form and catalogue response stay in one server-rendered
+request. The form in `FinderForm` uses `method="get"`,
 so the ordinary page flow remains functional when JavaScript is disabled.
 The page also offers three ordinary GET presets organized around first-time goals
 (Everyday chat, Help with coding, and Large code and documents). Each states its
@@ -91,13 +93,13 @@ and long links and disclosure summaries wrap rather than overflow.
 | `app/components/results-header.tsx` | Timestamp, stale-status, and shortlist heading presentation. |
 | `app/components/recommendation-card.tsx` | Recommendation fit explanation, metric hierarchy, Hugging Face source link, licence and gated-model notices, and initially collapsed installation and technical/ranking disclosures. |
 | `app/components/recommendation-metrics.tsx` | Reusable download, memory, pace, and setup-check card section. |
-| `app/api/recommendations/route.ts` | Node.js POST JSON endpoint; exposes `createPostHandler` for testing. |
+| `app/api/recommendations/route.ts` | POST JSON endpoint; exposes `createPostHandler` for testing. |
 | `lib/request.ts` | Typed GET-query parsing and shared request-level catalogue-unavailable message. |
 | `lib/hardware.ts` | Typed Apple Silicon profiles and configuration validation used by request boundaries and interactive hardware controls. |
 | `lib/recommendation-request.ts` | Typed POST request boundary that maps shared validation and catalogue failures to the API contract. |
 | `lib/recommendations.ts` | Pure memory and pace estimates, eligibility, scoring, ranking, and runtime guidance. |
 | `lib/recommendation-service.ts` | Composition layer joining catalogue retrieval to ranking and safely merging typed exclusion counts. |
-| `lib/catalogue.ts` | Stable retrieval facade: server-side Hugging Face retrieval, normalization, and persistent cache composition. |
+| `lib/catalogue.ts` | Stable retrieval facade: server-side Hugging Face retrieval, metadata normalization, and framework-cache composition. |
 | `lib/catalogue-request.ts` | Shared upstream timeout, JSON request, and bounded-concurrency helpers. |
 | `lib/catalogue-cache.ts` | Six-hour, process-local cache with request coalescing, stale fallback, and retry backoff. |
 | `tests/recommendations.test.ts` | Node tests for domain logic, ranking, cache behavior, and API statuses. |
@@ -169,9 +171,9 @@ artifacts.
   artifact, and the aggregate must meet the 100 MB minimum. This keeps snapshot
   download estimates conservative. Its guidance uses `uvx --from mlx-lm
   mlx_lm.generate`. It supports MLX.
-- Disk fit is strict: the exact byte size must be no greater than free disk.
-  It remains a best-effort estimate: imports can require temporary disk space,
-  and recommendations warn when less than 20% disk remains after download.
+- Disk fit is operationally strict: the exact artifact must leave at least 20%
+  free disk after download, because imports and temporary working files can need
+  additional space. Recommendations can still warn when headroom is only 20–25%.
 - Memory estimate adds conservative file-mapping, runtime, and context overhead.
   Small (4K tokens) is for short chats, Normal (16K tokens) is the default for
   typical chat/coding, and Long (32K tokens) reserves more headroom for large
@@ -202,12 +204,13 @@ representative from each family before adding additional variants, and returns a
 recommendation includes typed fit checks (disk and memory headroom, compatible
 runtimes, workload category, and pace inputs), ranking contributors, and its
 normalized family key. Hugging Face `pipeline_tag` is retained alongside titles
-and tags: text generation, text-to-text generation, instruct/chat, and coding
-metadata add a bounded workload preference. Missing task metadata stays eligible
-and neutral; explicit unknown or incompatible pipeline tasks are excluded
-conservatively.
-Numeric parameter metadata is normalized to billions whether the card supplies
-a small billions value or a large raw count. Workload metadata is presented only as
+and tags: generic `text-generation` and `text2text-generation` identify compatible
+generation tasks but do not by themselves imply chat suitability; instruct/chat
+tags, conversational tasks, and GGUF chat-template metadata provide chat signals.
+Missing task metadata stays eligible and neutral; explicit unknown or incompatible
+pipeline tasks are excluded conservatively. Numeric parameter metadata is
+normalized to billions from standard GGUF or safetensors totals, model-card
+values, base-model names, or repository names when plausible. Workload metadata is presented only as
 coding-oriented, general chat, mixed, or unknown—not as a capability benchmark. Ranking
 accepts an optional clock value for deterministic callers and tests; normal
 requests use `Date.now()`. Equal scores use stable artifact identity fields as
@@ -257,18 +260,17 @@ outstanding work. A refresh-controller abort fails the complete refresh
 atomically so the last valid local catalogue can be served as stale. An empty
 usable catalogue also fails the full refresh.
 
-Next.js `unstable_cache` wraps the complete production refresh under a stable
-key with a six-hour revalidation interval, sharing the full upstream crawl across
-requests, instances, and deployments. Results may therefore be up to six hours old.
-`CatalogueCache` holds the last valid normalized catalogue in each process for
-six hours. A cold local cache blocks only for the shared refresh budget; without
-a successful catalogue, the error is propagated. Once a catalogue has expired,
-callers immediately receive the prior catalogue with `stale: true` while one
-shared background refresh runs. A successful background refresh replaces the
-cache and clears the retry backoff. A failed refresh is consumed internally,
-keeps the prior catalogue stale, and waits five minutes before the next refresh
-attempt, avoiding repeated upstream calls during an outage. Cold failures also
-honour the same backoff before returning another unavailable response.
+Next.js Cache Components' `use cache` directive wraps the complete production
+refresh with a six-hour revalidation interval. `CatalogueCache` holds the last
+valid normalized catalogue in each process for six hours. A cold local cache
+blocks only for the shared refresh budget; without a successful catalogue, the
+error is propagated. Once a catalogue has expired, callers immediately receive
+the prior catalogue with `stale: true` while one shared background refresh runs.
+A successful background refresh replaces the cache and clears the retry backoff.
+A failed refresh is consumed internally, keeps the prior catalogue stale, and
+waits five minutes before the next refresh attempt, avoiding repeated upstream
+calls during an outage. Cold failures also honour the same backoff before
+returning another unavailable response.
 If a cold or completed refresh yields a catalogue already older than six hours,
 it is returned with `stale: true`; freshness never claims that an old catalogue
 is current. If no valid catalogue has ever been acquired, the error is propagated:
@@ -278,8 +280,9 @@ is current. If no valid catalogue has ever been acquired, the error is propagate
 | GET page | Inline, field-specific form errors | Inline temporary catalogue error |
 | `POST /api/recommendations` | `400` with `errors` and `fieldErrors` | `503` with `error` |
 
-No persistence layer, analytics, account service, or client-side catalogue
-request is part of this design.
+No application persistence layer, analytics, account service, or client-side
+catalogue request is part of this design. The framework cache is an optimization;
+the process-local cache remains the source of stale-fallback behavior.
 
 ## Development and verification
 

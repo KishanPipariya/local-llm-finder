@@ -16,6 +16,8 @@ export type Artifact = {
   gated: boolean;
   tags: string[];
   pipelineTag?: string;
+  baseModel?: string;
+  chatTemplate?: boolean;
   sourceUrl: string;
   repositoryUrl: string;
   /** Immutable Hugging Face commit revision when supplied by the catalogue. */
@@ -56,6 +58,7 @@ const runtimeNames: Record<Runtime, Recommendation["runtimes"][number]> = { olla
 const contextOverheadGb: Record<ContextPreset, number> = { small: 0.8, normal: 1.4, long: 3.2 };
 const contextSurchargeGb: Record<ContextPreset, number> = { small: 0, normal: 0.25, long: 2 };
 const contextLabels: Record<ContextPreset, string> = { small: "Small", normal: "Normal", long: "Long" };
+const operationalDiskHeadroom = 1.2;
 
 export function runtimeEligibility(config: MacConfig, artifact: Artifact): Recommendation["runtimes"] {
   if (artifact.format === "mlx") return ["MLX"];
@@ -88,15 +91,13 @@ function modelScore(item: Artifact, config: MacConfig, memoryGb: number, now: nu
 }
 
 function isCodingOriented(item: Artifact) {
-  return /(?:^|[^a-z])(?:code|coder|coding|programming)(?:$|[^a-z])/i.test(taskMetadata(item));
-}
-
-function taskMetadata(item: Artifact) {
-  return `${item.title} ${item.tags.join(" ")} ${item.pipelineTag ?? ""}`;
+  return /(?:^|[^a-z])(?:code|coder|coding|programming)(?:$|[^a-z])/i.test(`${item.title} ${item.tags.join(" ")} ${item.pipelineTag ?? ""}`);
 }
 
 function isChatOriented(item: Artifact) {
-  return /(?:^|[^a-z])(?:instruct|chat|assistant|conversation|text-generation|text2text-generation)(?:$|[^a-z])/i.test(taskMetadata(item));
+  return item.chatTemplate === true
+    || item.pipelineTag?.trim().toLowerCase() === "conversational"
+    || /(?:^|[^a-z])(?:instruct|chat|assistant|conversation)(?:$|[^a-z])/i.test(`${item.title} ${item.tags.join(" ")}`);
 }
 
 function taskRelevanceScore(item: Artifact, workload: MacConfig["workload"]) {
@@ -138,7 +139,12 @@ function workloadRelevance(category: WorkloadCategory, workload: MacConfig["work
 }
 
 function familyKey(item: Artifact) {
-  return item.modelId.replace(/-(GGUF|MLX|[Qq]\d[^/]*)$/i, "");
+  const seedSource = item.baseModel ?? item.modelId;
+  const seed = seedSource.split("/").at(-1) ?? seedSource;
+  return seed
+    .replace(/(?:[-_.](?:GGUF|MLX|\d+bit|[Qq]\d[^/]*)|[-_.](?:f(?:16|32)|bf16))$/i, "")
+    .replace(/[-_.]+$/, "")
+    .toLowerCase();
 }
 
 function variantKey(item: Recommendation) {
@@ -217,7 +223,7 @@ export function rankArtifactsWithExplanations(artifacts: Artifact[], config: Mac
     const memoryGb = estimateMemoryGb(item, context);
     if (!Number.isSafeInteger(item.sizeBytes) || item.sizeBytes <= 0) { exclusions.invalidSize += 1; return []; }
     if (!runtimes.length) { exclusions.unsupportedFormat += 1; return []; }
-    if (item.sizeBytes > config.diskGb * 1e9) { exclusions.insufficientDisk += 1; return []; }
+    if (item.sizeBytes * operationalDiskHeadroom > config.diskGb * 1e9) { exclusions.insufficientDisk += 1; return []; }
     if (memoryGb > config.memoryGb) { exclusions.insufficientMemory += 1; return []; }
     const tight = memoryGb > config.memoryGb * 0.82;
     const slow = memoryGb > config.memoryGb * 0.94;
@@ -231,7 +237,7 @@ export function rankArtifactsWithExplanations(artifacts: Artifact[], config: Mac
     const category = workloadCategory(item);
     const diskHeadroom = Math.round((config.diskGb * 1e9 - item.sizeBytes) / 1e6) * 1e6;
     const memoryHeadroom = Math.round((config.memoryGb - memoryGb) * 10) / 10;
-    if (diskHeadroom / (config.diskGb * 1e9) < 0.2) notes.push("Near disk limit: less than 20% free space remains after download; importing may need temporary disk space.");
+    if (diskHeadroom / (config.diskGb * 1e9) < 0.25) notes.push("Near disk limit: only 20–25% free space remains after download; importing may need temporary disk space.");
     if (memoryHeadroom < 2) notes.push("Near memory limit: less than 2 GB of estimated unified-memory headroom remains.");
     const rankingFactors = [
       workloadRelevance(category, config.workload),
