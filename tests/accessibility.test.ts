@@ -171,7 +171,7 @@ try {
   assert.equal(await initial.getByRole("link", { name: "Edit profile" }).getAttribute("href"), "/?chip=m4&memoryGb=16&diskGb=12&workload=chat&runtime=ollama&context=normal#finder", "edit profile preserves the full configuration in its GET URL");
   assert.equal(await initial.locator(".card.top-pick").count(), 1, "the first ranked result is visually marked as the top pick");
   assert.equal(await initial.locator(".card").first().locator(".top-pick-label").textContent(), "Top pick");
-  assert.equal(await initial.getByRole("link", { name: "Install with Ollama: open llama-3.2-3b.Q4_K_M.gguf on Hugging Face in a new tab" }).count(), 1, "top recommendation has a clearly labelled primary install action");
+  assert.equal(await initial.getByRole("link", { name: "Open Ollama model source: open llama-3.2-3b.Q4_K_M.gguf on Hugging Face in a new tab" }).count(), 1, "top recommendation has a clearly labelled model-source action");
   assert.equal(await initial.getByText("How these results work", { exact: true }).count(), 1, "catalogue caveats are available in a collapsed disclosure");
   assert.equal(await initial.getByRole("link", { name: "View llama-3.2-3b.Q4_K_M.gguf on Hugging Face (opens in a new tab)" }).count(), 1, "Ollama-compatible entries identify their Hugging Face file source");
   await assertUnchangedBox(initial, ".card.top-pick", () => initial.locator(".card.top-pick").hover(), "hovering a recommendation card");

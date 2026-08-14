@@ -1,4 +1,5 @@
 import { validateConfig, type MacConfig } from "./hardware";
+import { isCatalogueUnavailableError } from "./recommendation-service";
 
 export type PostResult<T> = { status: 200; body: T } | { status: 400; body: { errors: string[]; fieldErrors: Record<string, string | undefined> } } | { status: 503; body: { error: string } };
 
@@ -8,7 +9,8 @@ export async function handleRecommendationPost<T>(request: Request, get: (config
   if (!validation.valid) return { status: 400, body: { errors: validation.errors, fieldErrors: validation.fieldErrors } };
   try {
     return { status: 200, body: await get(validation.data) };
-  } catch {
-    return { status: 503, body: { error: unavailableMessage } };
+  } catch (error) {
+    if (isCatalogueUnavailableError(error)) return { status: 503, body: { error: unavailableMessage } };
+    throw error;
   }
 }

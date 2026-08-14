@@ -36,19 +36,47 @@ const validSize = (size: unknown): size is number => typeof size === "number" &&
 const knownFileSize = (size: unknown): size is number => typeof size === "number" && Number.isSafeInteger(size) && size > 0;
 const isMlxWeightFile = (file: HubFile) => /(?:^|\/)[^/]+\.safetensors$/i.test(file.rfilename) && knownFileSize(file.size);
 const supportedPipelineTags = new Set(["text-generation", "text2text-generation", "conversational"]);
-const knownNonTextPipelineTags = new Set([
+// Unknown tags remain eligible so newly introduced Hugging Face tasks do not
+// disappear silently. Explicitly recognized non-conversational tasks must not
+// be presented as local chat/coding models, however.
+const knownIncompatiblePipelineTags = new Set([
   "audio-classification",
+  "audio-to-audio",
   "automatic-speech-recognition",
   "depth-estimation",
+  "document-question-answering",
+  "feature-extraction",
+  "fill-mask",
   "image-classification",
+  "image-feature-extraction",
   "image-segmentation",
+  "image-to-image",
+  "image-to-text",
   "image-text-to-text",
+  "mask-generation",
+  "multiple-choice",
+  "ner",
   "object-detection",
-  "text-to-image",
+  "question-answering",
+  "reinforcement-learning",
+  "sentence-similarity",
+  "summarization",
+  "table-question-answering",
+  "text-classification",
   "text-to-speech",
+  "token-classification",
+  "translation",
+  "text-to-image",
   "video-classification",
+  "visual-question-answering",
+  "voice-activity-detection",
+  "zero-shot-classification",
+  "zero-shot-image-classification",
 ]);
-const isSupportedTask = (model: HubModel) => !model.pipeline_tag || supportedPipelineTags.has(model.pipeline_tag) || !knownNonTextPipelineTags.has(model.pipeline_tag);
+const isSupportedTask = (model: HubModel) => {
+  const task = model.pipeline_tag?.toLowerCase();
+  return !task || supportedPipelineTags.has(task) || !knownIncompatiblePipelineTags.has(task);
+};
 const isGgufShard = (file: HubFile) => /(?:^|[-_.])\d{5}-of-\d{5}\.gguf$/i.test(file.rfilename);
 const isGgufAuxiliary = (file: HubFile) => /(?:^|[._/-])(?:mmproj|imatrix|adapter|lora|tokenizer|vocab)(?:[._/-]|$)/i.test(file.rfilename);
 const isStandaloneGguf = (file: HubFile) => !isGgufShard(file) && !isGgufAuxiliary(file);
@@ -243,6 +271,13 @@ export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeo
     refreshController.signal.throwIfAborted();
     const detailFailures = detailed.filter((entry) => entry.model === undefined).length;
     if (detailFailures > detailed.length / 2) throw new Error("Hugging Face catalogue metadata refresh was materially incomplete");
+    for (const format of ["gguf", "mlx"] as const) {
+      const formatEntries = detailed.filter((entry) => entry.format === format);
+      const verifiedCount = formatEntries.filter((entry) => entry.model !== undefined).length;
+      if (!verifiedCount || formatEntries.filter((entry) => entry.model === undefined).length > formatEntries.length / 2) {
+        throw new Error(`Hugging Face ${format} metadata refresh was materially incomplete`);
+      }
+    }
     const verifiedGgufModels = detailed.filter((entry): entry is { format: "gguf"; model: HubModel } => entry.format === "gguf" && entry.model !== undefined).map((entry) => entry.model);
     const verifiedMlxModels = detailed.filter((entry): entry is { format: "mlx"; model: HubModel } => entry.format === "mlx" && entry.model !== undefined).map((entry) => entry.model);
     const items = [...normalizeModels(verifiedGgufModels, "gguf"), ...normalizeModels(verifiedMlxModels, "mlx")];

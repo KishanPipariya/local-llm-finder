@@ -6,6 +6,7 @@ import { chipProfiles, runtimes, validateConfig, type MacConfig } from "../lib/h
 import { CatalogueCache, isFresh } from "../lib/catalogue-cache";
 import { normalizationExclusions, normalizeModels, REFRESH_TIMEOUT_MS, retrieveCatalogue } from "../lib/catalogue";
 import { createPostHandler } from "../app/api/recommendations/route";
+import { CatalogueUnavailableError } from "../lib/recommendation-service";
 
 const mac: MacConfig = { chip: "m4", memoryGb: 16, diskGb: 12, workload: "coding" };
 const gguf: Artifact = { id: "org/Coder-7B-GGUF/model.Q4_K_M.gguf", modelId: "org/Coder-7B-GGUF", title: "Coder 7B", format: "gguf", sizeBytes: 5_000_000_000, sizeGb: 5, paramsB: 7, downloads: 3000, updatedAt: "2026-08-01T00:00:00Z", gated: false, tags: ["code"], repositoryUrl: "https://huggingface.co/org/Coder-7B-GGUF", sourceUrl: "https://huggingface.co/org/Coder-7B-GGUF/resolve/main/model.Q4_K_M.gguf", filename: "model.Q4_K_M.gguf" };
@@ -111,6 +112,19 @@ test("uses exact-file LM Studio and mlx-lm installation guidance", () => {
 
   const mlxGuidance = buildGuidance(mlx, ["MLX"])[0].command;
   assert.match(mlxGuidance, /uvx --from mlx-lm mlx_lm\.generate/);
+});
+
+test("pins ungated llama.cpp and MLX downloads to the catalogue revision", () => {
+  const pinnedGguf = { ...gguf, revision: "9f4d7c1" };
+  const llama = buildGuidance(pinnedGguf, ["llama.cpp"])[0].command;
+  assert.match(llama, /hf download 'org\/Coder-7B-GGUF' 'model\.Q4_K_M\.gguf' --revision '9f4d7c1'/);
+  assert.match(llama, /llama-cli -m 'model\.Q4_K_M\.gguf'/);
+  assert.doesNotMatch(llama, /--hf-repo/);
+
+  const pinnedMlx = { ...mlx, revision: "a1b2c3" };
+  const mlxGuidance = buildGuidance(pinnedMlx, ["MLX"])[0].command;
+  assert.match(mlxGuidance, /hf download 'mlx-community\/Coder-7B-4bit' --revision 'a1b2c3'/);
+  assert.match(mlxGuidance, /--model 'mlx-community-Coder-7B-4bit'/);
 });
 test("uses authenticated exact-revision downloads for gated artifacts", () => {
   const gated = { ...gguf, gated: true, revision: "9f4d7c1" };
@@ -262,7 +276,10 @@ test("thirty-second cold-start deadline aborts requests and preserves the unavai
   assert.equal(requestAborted, true, "the refresh deadline reaches outstanding requests");
 
   const empty = new CatalogueCache(() => retrieveCatalogue(hangingFetch as typeof fetch, 5));
-  const deadlineHandler = createPostHandler(async () => empty.get());
+  const deadlineHandler = createPostHandler(async () => {
+    try { return await empty.get(); }
+    catch (error) { throw new CatalogueUnavailableError("offline", { cause: error }); }
+  });
   assert.equal((await deadlineHandler(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify(mac) }))).status, 503);
 });
 test("API preserves status codes and returns typed input errors", async () => {
@@ -274,6 +291,8 @@ test("API preserves status codes and returns typed input errors", async () => {
   assert.deepEqual(Object.keys((await partial.json()).fieldErrors).sort(), ["diskGb", "memoryGb", "workload"]);
   const valid = await handler(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify(mac) }));
   assert.deepEqual(await valid.json(), response);
-  const unavailable = createPostHandler(async () => { throw new Error("offline"); });
+  const unavailable = createPostHandler(async () => { throw new CatalogueUnavailableError("offline"); });
   assert.equal((await unavailable(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify(mac) }))).status, 503);
+  const unexpected = createPostHandler(async () => { throw new Error("programmer bug"); });
+  await assert.rejects(unexpected(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify(mac) })), /programmer bug/);
 });

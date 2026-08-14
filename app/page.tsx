@@ -3,7 +3,7 @@ import { Results } from "@/app/components/results";
 import { Hero } from "@/app/components/hero";
 import { PresetLinks } from "@/app/components/preset-links";
 import { SiteFooter } from "@/app/components/site-footer";
-import { getRecommendations } from "@/lib/recommendation-service";
+import { getRecommendations, isCatalogueUnavailableError } from "@/lib/recommendation-service";
 import { catalogueUnavailableMessage, parseFinderRequest, type FinderSearchParams } from "@/lib/request";
 import type { MacConfig } from "@/lib/hardware";
 
@@ -18,7 +18,10 @@ export default async function Home({ searchParams }: { searchParams: Promise<Fin
   let catalogueError = "";
   if (submitted && validation.valid) {
     try { result = await getRecommendations(validation.data); }
-    catch { catalogueError = catalogueUnavailableMessage; }
+    catch (error) {
+      if (isCatalogueUnavailableError(error)) catalogueError = catalogueUnavailableMessage;
+      else throw error;
+    }
   }
   return <main>
     <a className="skip-link" href="#finder">Skip to the model finder</a>

@@ -58,8 +58,8 @@ the no-account, no-tracking, and no-saved-configuration promise beside the
 primary task. Results begin with a compact submitted-setup summary and an Edit
 profile GET link that preserves the complete configuration. They visually mark
 the first already-ranked card as the “Top pick”, explain its fit,
-download/storage, qualitative pace, and offer a primary runtime-specific
-installation link. Remaining cards are grouped as alternatives with a one-line choice cue.
+download/storage, qualitative pace, and offer a primary runtime-specific model
+source link alongside the collapsed installation guidance. Remaining cards are grouped as alternatives with a one-line choice cue.
 This presentation does not alter scoring, ranking, or API output. Catalogue
 scope and performance caveats are kept in a native “How these results work”
 disclosure while freshness remains visible. An empty shortlist renders an
@@ -149,13 +149,14 @@ artifacts.
   quantization variant (Q2–Q8, IQ variants, and F16/BF16/F32 labels when
   present). Split shards and auxiliary `mmproj`, tokenizer, adapter, LoRA, and
   imatrix files are excluded because the exact-file guidance cannot run them by
-  themselves. Known non-text pipeline tasks are excluded; missing or unknown
+  themselves. Known incompatible pipeline tasks are excluded; missing or unknown
   task metadata remains eligible but neutral. It supports Ollama, LM Studio,
   and llama.cpp. Its Ollama guidance remains the explicit
   download-and-`ollama create` import recipe; LM Studio guidance downloads the
   exact verified GGUF source URL and runs `lms import` on that downloaded file;
-  llama.cpp guidance uses its separate repository and exact-file flags. Download
-  recipes use strict curl failure handling, create nested output directories,
+  llama.cpp guidance uses its separate repository and exact-file flags when no
+  immutable revision is available; otherwise it downloads the pinned file before
+  local execution. Download recipes use strict curl failure handling, create nested output directories,
   and shell-quote catalogue-controlled values; arbitrary Hugging Face files
   never use `ollama pull` or a catalogue search command.
 - MLX: require at least one positively sized `.safetensors` weight file and a
@@ -196,7 +197,7 @@ runtimes, workload category, and pace inputs), ranking contributors, and its
 normalized family key. Hugging Face `pipeline_tag` is retained alongside titles
 and tags: text generation, text-to-text generation, instruct/chat, and coding
 metadata add a bounded workload preference. Missing or unknown task metadata
-stays eligible and neutral; only an explicit known non-text task is excluded.
+stays eligible and neutral; only an explicit known incompatible task is excluded.
 Numeric parameter metadata is normalized to billions whether the card supplies
 a small billions value or a large raw count. Workload metadata is presented only as
 coding-oriented, general chat, or mixed—not as a capability benchmark. Ranking
@@ -236,9 +237,10 @@ Because those list responses contain filenames but not reliable byte sizes, it
 then obtains each selected repository's `blobs=true` metadata with a bounded
 global concurrency of six in-flight requests across both formats. A repository that disappears or
 fails during that second step is excluded; its unverified files are never
-recommended. If more than half of detail requests fail, the refresh is treated
-as materially incomplete and fails atomically rather than replacing the last
-valid catalogue with a severely truncated one. Each request has a 12-second
+recommended. If more than half of detail requests fail overall, more than half
+fail within either format, or no verified repository remains for a format, the
+refresh is treated as materially incomplete and fails atomically rather than
+replacing the last valid catalogue with a severely truncated one. Each request has a 12-second
 timeout, while a complete refresh has a 30-second deadline that aborts all
 outstanding work. A refresh-controller abort fails the complete refresh
 atomically so the last valid local catalogue can be served as stale. An empty

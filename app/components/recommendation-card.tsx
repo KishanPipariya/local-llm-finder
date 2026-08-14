@@ -16,7 +16,7 @@ export function RecommendationCard({ model, isTopPick = false }: { model: Recomm
     <div className="runtimes" aria-label="Compatible runtimes">{model.runtimes.map((runtime) => <span key={runtime}>{runtime}</span>)}</div>
     {model.filename && <p className="artifact-file">File: <code>{model.filename}</code></p>}
     {model.notes.map((note) => <p className="note" key={note}>{note}</p>)}
-    {isTopPick && <a className="install-cta" href={model.sourceUrl} target="_blank" rel="noreferrer" aria-label={`Install with ${primaryRuntime}: open ${sourceItem} on ${source} in a new tab`}>Install with {primaryRuntime} <span aria-hidden="true">↗</span><span className="visually-hidden"> (opens in a new tab)</span></a>}
+    {isTopPick && <a className="install-cta" href={model.sourceUrl} target="_blank" rel="noreferrer" aria-label={`Open ${primaryRuntime} model source: open ${sourceItem} on ${source} in a new tab`}>Open {primaryRuntime} model source <span aria-hidden="true">↗</span><span className="visually-hidden"> (opens in a new tab)</span></a>}
     {!isTopPick && <p className="alternative-guidance">Choose instead if you prefer this model’s {model.explanation.fit.workload.category} focus or its download and pace trade-off.</p>}
     <a href={model.sourceUrl} target="_blank" rel="noreferrer" aria-label={`View ${sourceItem} on ${source} (opens in a new tab)`}>View {sourceItem} on {source} <span aria-hidden="true">↗</span><span className="visually-hidden"> (opens in a new tab)</span></a>
     <details className="disclosure recipe"><summary>Installation guidance</summary><div className="disclosure-content">{model.guidance.map((guide) => <div className="guide" key={guide.runtime}><b>{guide.runtime}</b><code>{guide.command}</code></div>)}</div></details>

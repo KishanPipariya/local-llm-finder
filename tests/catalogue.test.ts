@@ -49,6 +49,10 @@ test("catalogue excludes non-chat tasks and non-standalone GGUF files", () => {
   assert.deepEqual(normalizeModels([multimodal], "gguf"), []);
   assert.deepEqual(normalizationExclusions([multimodal], "gguf"), { unsupportedArtifact: 1 });
 
+  const featureExtraction = { id: "org/Embedding-GGUF", pipeline_tag: "feature-extraction", siblings: [{ rfilename: "embedding.Q4.gguf", size: 4_000_000_000 }] };
+  assert.deepEqual(normalizeModels([featureExtraction], "gguf"), []);
+  assert.deepEqual(normalizationExclusions([featureExtraction], "gguf"), { unsupportedArtifact: 1 });
+
   const unknownTask = { id: "org/UnknownTask-GGUF", pipeline_tag: "future-text-task", siblings: [{ rfilename: "model.Q4.gguf", size: 4_000_000_000 }] };
   assert.equal(normalizeModels([unknownTask], "gguf").length, 1, "unknown task metadata stays eligible and neutral");
 
@@ -82,7 +86,7 @@ test("catalogue refresh fetches blob metadata for every listed repository", asyn
   assert.deepEqual(catalogue.items.map((item) => item.format).sort(), ["gguf", "mlx"]);
 });
 
-test("catalogue refresh uses blob metadata, tolerates an unavailable repository, and rejects failed lists", async () => {
+test("catalogue refresh uses blob metadata, rejects incomplete format feeds, and rejects failed lists", async () => {
   const urls: string[] = [];
   const listOnly = async (url: string, init?: RequestInit) => {
     urls.push(url);
@@ -91,8 +95,17 @@ test("catalogue refresh uses blob metadata, tolerates an unavailable repository,
   const catalogue = await retrieveCatalogue(listOnly as typeof fetch);
   assert.deepEqual(catalogue.items.map((item) => item.sizeBytes).sort((a, b) => a - b), [4_000_000_000, 4_000_002_000]);
   assert.equal(urls.filter((url) => url.includes("?blobs=true")).length, 2);
-  const partial = await retrieveCatalogue(upstream({ unavailableModel: "org/Model-GGUF" }) as typeof fetch);
-  assert.deepEqual(partial.items.map((item) => item.format), ["mlx"]);
+  await assert.rejects(retrieveCatalogue(upstream({ unavailableModel: "org/Model-GGUF" }) as typeof fetch), /gguf metadata refresh was materially incomplete/);
+
+  const partiallyUnavailable = async (url: string) => {
+    if (url.includes("?full=true")) {
+      return Response.json(url.includes("author=mlx-community") ? [listedMlxModel] : [listedModel, { ...listedModel, id: "org/Second-Model-GGUF" }]);
+    }
+    if (url.includes("org/Model-GGUF")) return new Response(null, { status: 503 });
+    return Response.json(url.includes("mlx-community") ? listedMlxModel : listedModel);
+  };
+  const partial = await retrieveCatalogue(partiallyUnavailable as typeof fetch);
+  assert.deepEqual(partial.items.map((item) => item.format).sort(), ["gguf", "mlx"]);
   await assert.rejects(retrieveCatalogue((async () => new Response(null, { status: 503 })) as typeof fetch));
 });
 
