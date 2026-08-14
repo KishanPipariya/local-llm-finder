@@ -29,6 +29,11 @@ const titleOf = (id: string) => id.split("/").at(-1)?.replace(/-(GGUF|MLX)$/i, "
 const validSize = (size: unknown): size is number => typeof size === "number" && Number.isSafeInteger(size) && size >= MIN_ARTIFACT_BYTES;
 const knownFileSize = (size: unknown): size is number => typeof size === "number" && Number.isSafeInteger(size) && size > 0;
 const isMlxWeightFile = (file: HubFile) => /(?:^|\/)[^/]+\.safetensors$/i.test(file.rfilename) && knownFileSize(file.size);
+const supportedPipelineTags = new Set(["text-generation", "text2text-generation", "conversational"]);
+const isSupportedTask = (model: HubModel) => !model.pipeline_tag || supportedPipelineTags.has(model.pipeline_tag);
+const isGgufShard = (file: HubFile) => /(?:^|[-_.])\d{5}-of-\d{5}\.gguf$/i.test(file.rfilename);
+const isGgufAuxiliary = (file: HubFile) => /(?:^|[._/-])(?:mmproj|imatrix|adapter|lora|tokenizer|vocab)(?:[._/-]|$)/i.test(file.rfilename);
+const isStandaloneGguf = (file: HubFile) => !isGgufShard(file) && !isGgufAuxiliary(file);
 const repoUrl = (id: string) => `https://huggingface.co/${id}`;
 const revisionUrl = (id: string, revision?: string) => revision ? `${repoUrl(id)}/tree/${encodeURIComponent(revision)}` : repoUrl(id);
 const fileUrl = (id: string, filename: string, revision?: string) => `${repoUrl(id)}/resolve/${encodeURIComponent(revision ?? "main")}/${filename.split("/").map(encodeURIComponent).join("/")}`;
@@ -110,7 +115,7 @@ function modelFiles(model: HubModel): HubFile[] {
 }
 
 function validGgufFiles(files: HubFile[]) {
-  return files.filter((file) => validSize(file.size)).sort((a, b) => a.size! - b.size! || a.rfilename.localeCompare(b.rfilename));
+  return files.filter((file) => isStandaloneGguf(file) && validSize(file.size)).sort((a, b) => a.size! - b.size! || a.rfilename.localeCompare(b.rfilename));
 }
 
 function quantizationOf(filename: string) {
@@ -122,6 +127,7 @@ function quantizationOf(filename: string) {
 
 export function normalizeModels(models: HubModel[], format: Artifact["format"]): Artifact[] {
   return models.flatMap((model) => {
+    if (!isSupportedTask(model)) return [];
     const files = modelFiles(model);
     const matched = format === "gguf" ? files.filter((file) => /\.gguf$/i.test(file.rfilename)) : files;
     const selectedFiles = format === "gguf" ? validGgufFiles(matched) : [undefined];
@@ -163,11 +169,14 @@ export function normalizationExclusions(models: HubModel[], format: Artifact["fo
   return models.reduce<Partial<ExclusionSummary>>((counts, model) => {
     const files = modelFiles(model);
     const matched = format === "gguf" ? files.filter((file) => /\.gguf$/i.test(file.rfilename)) : files;
-    if (!matched.length) counts.unsupportedFormat = (counts.unsupportedFormat ?? 0) + 1;
+    if (!isSupportedTask(model)) counts.unsupportedArtifact = (counts.unsupportedArtifact ?? 0) + 1;
+    else if (!matched.length) counts.unsupportedFormat = (counts.unsupportedFormat ?? 0) + 1;
     else if (format === "gguf") {
       // A GGUF file becomes its own recommendation, so account for every
       // rejected file even when its repository has valid alternatives.
-      const invalidFiles = matched.filter((file) => !validSize(file.size)).length;
+      const nonStandaloneFiles = matched.filter((file) => !isStandaloneGguf(file)).length;
+      const invalidFiles = matched.filter((file) => isStandaloneGguf(file) && !validSize(file.size)).length;
+      if (nonStandaloneFiles) counts.unsupportedArtifact = (counts.unsupportedArtifact ?? 0) + nonStandaloneFiles;
       if (invalidFiles) counts.invalidSize = (counts.invalidSize ?? 0) + invalidFiles;
     } else if (!normalizeModels([model], format).length) {
       // MLX is downloaded as one repository snapshot, so its exclusion stays
@@ -214,13 +223,23 @@ export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeo
       async ({ format, model }) => ({ format, model: await retrieveModelMetadata(model, fetcher, refreshController.signal) }),
     );
     refreshController.signal.throwIfAborted();
+    const detailFailures = detailed.filter((entry) => entry.model === undefined).length;
+    if (detailFailures > detailed.length / 2) throw new Error("Hugging Face catalogue metadata refresh was materially incomplete");
     const verifiedGgufModels = detailed.filter((entry): entry is { format: "gguf"; model: HubModel } => entry.format === "gguf" && entry.model !== undefined).map((entry) => entry.model);
     const verifiedMlxModels = detailed.filter((entry): entry is { format: "mlx"; model: HubModel } => entry.format === "mlx" && entry.model !== undefined).map((entry) => entry.model);
     const items = [...normalizeModels(verifiedGgufModels, "gguf"), ...normalizeModels(verifiedMlxModels, "mlx")];
     if (!items.length) throw new Error("Hugging Face catalogue returned no usable artifacts");
     const ggufExclusions = normalizationExclusions(verifiedGgufModels, "gguf");
     const mlxExclusions = normalizationExclusions(verifiedMlxModels, "mlx");
-    return { items, refreshedAt: new Date().toISOString(), exclusions: { invalidSize: (ggufExclusions.invalidSize ?? 0) + (mlxExclusions.invalidSize ?? 0), unsupportedFormat: (ggufExclusions.unsupportedFormat ?? 0) + (mlxExclusions.unsupportedFormat ?? 0) } };
+    return {
+      items,
+      refreshedAt: new Date().toISOString(),
+      exclusions: {
+        invalidSize: (ggufExclusions.invalidSize ?? 0) + (mlxExclusions.invalidSize ?? 0),
+        unsupportedFormat: (ggufExclusions.unsupportedFormat ?? 0) + (mlxExclusions.unsupportedFormat ?? 0),
+        unsupportedArtifact: (ggufExclusions.unsupportedArtifact ?? 0) + (mlxExclusions.unsupportedArtifact ?? 0),
+      },
+    };
   } finally {
     clearTimeout(deadline);
     // Stop parallel upstream work whenever this refresh completes or fails.

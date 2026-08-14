@@ -19,6 +19,11 @@ test("accepts every chip's supported memory options and rejects impossible pairs
   assert.equal(validateConfig({ ...mac, chip: { family: "m4" }, memoryGb: 16 }).valid, false);
   assert.equal(validateConfig({ ...mac, diskGb: 0 }).valid, false);
 });
+test("uses conservative lower-bound bandwidth for configurable Max variants", () => {
+  assert.equal(chipProfiles.m3Max.bandwidthGbps, 300);
+  assert.equal(chipProfiles.m4Max.bandwidthGbps, 410);
+  assert.equal(chipProfiles.m5Max.bandwidthGbps, 460);
+});
 test("returns typed field errors while preserving the API error list", () => {
   const invalid = validateConfig({ chip: "m4Pro", memoryGb: 16, diskGb: 0, workload: "other" });
   assert.equal(invalid.valid, false);
@@ -244,7 +249,7 @@ test("thirty-second cold-start deadline aborts requests and preserves the unavai
   assert.equal((await deadlineHandler(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify(mac) }))).status, 503);
 });
 test("API preserves status codes and returns typed input errors", async () => {
-  const response = { recommendations: [], exclusions: { insufficientDisk: 0, insufficientMemory: 0, invalidSize: 0, unsupportedFormat: 0 }, refreshedAt: "2026-08-01T00:00:00Z", stale: true };
+  const response = { recommendations: [], exclusions: { insufficientDisk: 0, insufficientMemory: 0, invalidSize: 0, unsupportedFormat: 0, unsupportedArtifact: 0 }, refreshedAt: "2026-08-01T00:00:00Z", stale: true };
   const handler = createPostHandler(async () => response);
   const invalid = await handler(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify({ chip: "m4", memoryGb: 99, diskGb: 0, workload: "nope" }) }));
   assert.equal(invalid.status, 400); assert.ok((await invalid.json()).fieldErrors);

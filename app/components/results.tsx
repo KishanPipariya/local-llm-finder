@@ -8,6 +8,7 @@ const exclusionDetails = [
   ["insufficientMemory", "insufficient unified memory", "Choose a smaller model or quantization, and close other apps."],
   ["invalidSize", "unknown or implausible artifact size", "These files are intentionally not presented as installable."],
   ["unsupportedFormat", "unsupported format", "Choose GGUF for Ollama, LM Studio, or llama.cpp, or MLX for MLX."],
+  ["unsupportedArtifact", "incomplete or non-chat artifact", "Only complete, self-contained text-model artifacts are presented."],
 ] as const;
 
 const runtimeLabels = { ollama: "Ollama", lmStudio: "LM Studio", llamaCpp: "llama.cpp", mlx: "MLX" } as const;
@@ -15,7 +16,8 @@ const workloadLabels = { chat: "questions and writing", coding: "coding", balanc
 const contextLabels = { small: "short conversations", normal: "typical conversations", long: "long conversations" } as const;
 
 function editProfileHref(config: MacConfig) {
-  const query = new URLSearchParams(Object.entries(config).map(([key, value]) => [key, String(value)]));
+  const completeConfig = { ...config, runtime: config.runtime ?? "ollama", context: config.context ?? "normal" };
+  const query = new URLSearchParams(Object.entries(completeConfig).map(([key, value]) => [key, String(value)]));
   return `/?${query.toString()}#finder`;
 }
 

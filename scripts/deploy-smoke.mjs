@@ -44,7 +44,7 @@ function verifyResult(body, runtime) {
   assert(typeof body.refreshedAt === "string" && Number.isFinite(Date.parse(body.refreshedAt)), `${runtime}: API response has an invalid catalogue timestamp.`);
   assert(body.exclusions !== null && typeof body.exclusions === "object" && !Array.isArray(body.exclusions), `${runtime}: API response is missing exclusions.`);
 
-  for (const reason of ["insufficientDisk", "insufficientMemory", "invalidSize", "unsupportedFormat"]) {
+  for (const reason of ["insufficientDisk", "insufficientMemory", "invalidSize", "unsupportedFormat", "unsupportedArtifact"]) {
     assert(typeof body.exclusions[reason] === "number" && body.exclusions[reason] >= 0, `${runtime}: API response has an invalid ${reason} exclusion count.`);
   }
 

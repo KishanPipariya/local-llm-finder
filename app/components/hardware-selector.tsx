@@ -1,7 +1,7 @@
 "use client";
 
-import type { ChangeEvent } from "react";
-import { chipProfiles, chips, type Chip, type ConfigFieldErrors } from "@/lib/hardware";
+import { useSyncExternalStore, type ChangeEvent } from "react";
+import { allMemoryOptionsGb, chipProfiles, chips, type Chip, type ConfigFieldErrors } from "@/lib/hardware";
 
 function closestMemoryOption(memoryGb: number, options: readonly number[]) {
   return options.reduce((closest, option) => {
@@ -11,8 +11,14 @@ function closestMemoryOption(memoryGb: number, options: readonly number[]) {
   });
 }
 
+const noOpSubscribe = () => () => undefined;
+const clientEnhancedSnapshot = () => true;
+const serverEnhancedSnapshot = () => false;
+
 export function HardwareSelector({ chip, memoryGb, fieldErrors, onChange, status }: { chip: Chip; memoryGb: number; fieldErrors: ConfigFieldErrors; onChange: (chip: Chip, memoryGb: number, status: string) => void; status: string }) {
   const memoryOptions = chipProfiles[chip].memoryOptionsGb as readonly number[];
+  const enhanced = useSyncExternalStore(noOpSubscribe, clientEnhancedSnapshot, serverEnhancedSnapshot);
+  const renderedMemoryOptions = enhanced ? memoryOptions : allMemoryOptionsGb;
 
   function handleChipChange(event: ChangeEvent<HTMLSelectElement>) {
     const nextChip = event.target.value as Chip;
@@ -29,7 +35,7 @@ export function HardwareSelector({ chip, memoryGb, fieldErrors, onChange, status
     </label>
     <label htmlFor="memoryGb">Unified memory (GB)
       <select id="memoryGb" name="memoryGb" required value={memoryGb} onChange={(event) => onChange(chip, Number(event.target.value), "")} aria-invalid={Boolean(fieldErrors.memoryGb)} aria-describedby={fieldErrors.memoryGb ? "memory-error" : undefined}>
-        {memoryOptions.map((memoryOption) => <option key={memoryOption} value={memoryOption}>{memoryOption} GB</option>)}
+        {renderedMemoryOptions.map((memoryOption) => <option key={memoryOption} value={memoryOption}>{memoryOption} GB{!enhanced && ` (${chips.filter((chipOption) => (chipOption.memoryOptionsGb as readonly number[]).includes(memoryOption)).map((chipOption) => chipOption.name).join(", ")})`}</option>)}
       </select>
       {fieldErrors.memoryGb && <span className="field-error" id="memory-error">{fieldErrors.memoryGb}</span>}
     </label>

@@ -168,16 +168,16 @@ try {
   await initial.goto(`${origin}/?chip=m4&memoryGb=16&diskGb=12&workload=chat`, { waitUntil: "networkidle" });
   assert.equal(await initial.locator(".setup-summary").count(), 1, "results include a compact setup summary");
   assert.match(await initial.locator(".setup-summary").textContent() ?? "", /M4[\s\S]*16 GB unified memory[\s\S]*12 GB free disk/, "setup summary retains the submitted Mac details");
-  assert.equal(await initial.getByRole("link", { name: "Edit profile →" }).getAttribute("href"), "/?chip=m4&memoryGb=16&diskGb=12&workload=chat&runtime=ollama&context=normal#finder", "edit profile preserves the full configuration in its GET URL");
+  assert.equal(await initial.getByRole("link", { name: "Edit profile" }).getAttribute("href"), "/?chip=m4&memoryGb=16&diskGb=12&workload=chat&runtime=ollama&context=normal#finder", "edit profile preserves the full configuration in its GET URL");
   assert.equal(await initial.locator(".card.top-pick").count(), 1, "the first ranked result is visually marked as the top pick");
   assert.equal(await initial.locator(".card").first().locator(".top-pick-label").textContent(), "Top pick");
   assert.equal(await initial.getByRole("link", { name: "Install with Ollama: open llama-3.2-3b.Q4_K_M.gguf on Hugging Face in a new tab" }).count(), 1, "top recommendation has a clearly labelled primary install action");
   assert.equal(await initial.getByText("How these results work", { exact: true }).count(), 1, "catalogue caveats are available in a collapsed disclosure");
   assert.equal(await initial.getByRole("link", { name: "View llama-3.2-3b.Q4_K_M.gguf on Hugging Face (opens in a new tab)" }).count(), 1, "Ollama-compatible entries identify their Hugging Face file source");
-  await assertUnchangedBox(initial, ".card", () => initial.locator(".card").first().hover(), "hovering a recommendation card");
+  await assertUnchangedBox(initial, ".card.top-pick", () => initial.locator(".card.top-pick").hover(), "hovering a recommendation card");
   await assertCardDisclosure(initial, "Installation guidance");
   await initial.locator(".card").first().getByText("Installation guidance", { exact: true }).click();
-  const ollamaGuide = await initial.locator(".card").first().locator(".guide code").textContent();
+  const ollamaGuide = await initial.locator(".card").first().locator(".guide").filter({ hasText: "Ollama" }).locator("code").textContent();
   assert.match(ollamaGuide ?? "", /ollama create local-model/);
   assert.doesNotMatch(ollamaGuide ?? "", /ollama pull/);
   await assertCardDisclosure(initial, "Technical details and ranking factors");
@@ -185,7 +185,7 @@ try {
 
   await initial.goto(`${origin}/?chip=m4&memoryGb=16&diskGb=1&workload=chat`, { waitUntil: "networkidle" });
   assert.equal(await initial.locator(".no-results").count(), 1, "no-result profiles include a recovery panel");
-  assert.equal(await initial.getByRole("link", { name: "Edit this profile to try again →" }).count(), 1, "no-result recovery keeps a no-JavaScript edit path");
+  assert.equal(await initial.getByRole("link", { name: "Edit this profile to try again" }).count(), 1, "no-result recovery keeps a no-JavaScript edit path");
 
   const narrowContext = await browser.newContext({ viewport: { width: 320, height: 720 } });
   const narrowInitial = await waitForPage(narrowContext);
@@ -205,7 +205,7 @@ try {
   await narrowResults.goto(`${origin}/?chip=m4&memoryGb=16&diskGb=12&workload=chat`, { waitUntil: "networkidle" });
   await assertNoAxeViolations(narrowResults, "320px populated results");
   await assertPhoneLayout(narrowResults, "320px populated results");
-  assert.equal(await narrowResults.locator(".cards").count(), 1, "320px populated results retain recommendation cards");
+  assert.ok(await narrowResults.locator(".card").count(), "320px populated results retain recommendation cards");
 
   const partial = await narrowContext.newPage();
   await partial.goto(`${origin}/?chip=m4`, { waitUntil: "networkidle" });
@@ -250,8 +250,18 @@ try {
   assert.equal(await noScript.locator(".error-summary").count(), 0);
   assert.equal(await noScript.locator("#results").count(), 1, "fixture-backed recommendations render server-side without JavaScript");
   assert.ok(await noScript.locator(".card").count());
+  await noScript.waitForTimeout(700);
   await assertCardDisclosure(noScript, "Installation guidance");
   await assertCardDisclosure(noScript, "Technical details and ranking factors");
+  await noScript.goto(origin, { waitUntil: "domcontentloaded" });
+  await noScript.locator("#chip").selectOption("m3Pro");
+  assert.equal(await noScript.locator("#memoryGb option[value='18']").count(), 1, "no-JavaScript form exposes memory choices for non-default chips");
+  await noScript.locator("#memoryGb").selectOption("18");
+  await noScript.locator("#diskGb").fill("12");
+  await noScript.getByRole("button", { name: /Find models for/ }).click({ force: true, noWaitAfter: true });
+  await noScript.waitForURL(/chip=m3Pro/);
+  assert.match(noScript.url(), /memoryGb=18/);
+  assert.equal(await noScript.locator("#results").count(), 1, "non-default chip recommendations render server-side without JavaScript");
   await noScriptContext.close();
   await phoneContext.close();
   await narrowDarkContext.close();

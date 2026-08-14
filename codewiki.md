@@ -124,11 +124,17 @@ and long links and disclosure summaries wrap rather than overflow.
   ranking remains runtime-neutral for legacy API callers and URLs.
 - `context` (optional): `small` (4K tokens), `normal` (16K tokens), or `long`
   (32K tokens). When absent it uses the established conservative Normal
-  estimate.
+  estimate. UI edit links serialize omitted preferences as the Ollama/Normal
+  defaults so a round trip preserves the visible profile.
 
 It returns both an ordered error list and typed field errors. Both GET and POST
 must use this function so they reject the same impossible Mac configurations,
 including incomplete submitted configurations.
+
+The hardware selector server-renders the union of all memory sizes so a person
+can choose a valid chip/memory pair even with JavaScript disabled. After
+hydration, the client narrows that list to the selected chip and adjusts memory
+to the nearest supported value when the chip changes.
 
 ### Artifact normalization and fit
 
@@ -139,15 +145,20 @@ omitted, and malformed files are discarded before `Artifact` values are
 created. Normalization excludes unknown, non-integer, and smaller-than-100 MB
 artifacts.
 
-- GGUF: retain every valid Hugging Face `.gguf` file as a separate quantization
-  variant (Q2–Q8, IQ variants, and F16/BF16/F32 labels when present). It supports
-  Ollama, LM Studio, and llama.cpp. Its Ollama guidance remains the explicit
+- GGUF: retain every valid, standalone Hugging Face `.gguf` file as a separate
+  quantization variant (Q2–Q8, IQ variants, and F16/BF16/F32 labels when
+  present). Split shards and auxiliary `mmproj`, tokenizer, adapter, LoRA, and
+  imatrix files are excluded because the exact-file guidance cannot run them by
+  themselves. Known non-text pipeline tasks are excluded; missing or unknown
+  task metadata remains eligible but neutral. It supports Ollama, LM Studio,
+  and llama.cpp. Its Ollama guidance remains the explicit
   download-and-`ollama create` import recipe; LM Studio guidance downloads the
   exact verified GGUF source URL and runs `lms import` on that downloaded file;
   arbitrary Hugging Face files never use `ollama pull` or a catalogue search
   command.
-- MLX: require at least one positively sized `.safetensors` weight file, then
-  sum every file in the repository snapshot—not only recognised runtime assets.
+- MLX: require at least one positively sized `.safetensors` weight file and a
+  supported text-generation pipeline, then sum every file in the repository
+  snapshot—not only recognised runtime assets.
   Any unknown, non-integer, or non-positive included file size excludes the
   artifact, and the aggregate must meet the 100 MB minimum. This keeps snapshot
   download estimates conservative. Its guidance uses `uvx --from mlx-lm
@@ -196,13 +207,17 @@ file because each file is a separately recommendable artifact; MLX invalid-size
 exclusions are counted once per repository snapshot because MLX downloads the
 complete repository. The
 UI only exposes reasons with a non-zero count and offers safe next actions for
-disk, memory, unsupported-format, and invalid-size constraints. Invalid sizes
-remain excluded and are never shown as installable artifacts.
+disk, memory, unsupported-format, unsupported-artifact, and invalid-size
+constraints. Invalid sizes, incomplete files, and known non-chat tasks remain
+excluded and are never shown as installable artifacts.
 
 ### Pace and memory language
 
-`expectedPace` compares a chip profile's published family memory bandwidth with
-the estimated memory footprint and returns `Fast`, `Moderate`, or `Slow`.
+`expectedPace` compares a chip profile's conservative lower-bound published
+memory bandwidth with the estimated memory footprint and returns `Fast`,
+`Moderate`, or `Slow`. A chip selector does not identify GPU tier, so Max-family
+profiles use the slowest bandwidth among supported configurations rather than
+overstating pace for lower-tier variants.
 This is deliberately qualitative, never a tokens-per-second claim. Memory
 statuses are `Comfortable`, `Tight memory`, and `Likely slow`; the latter two
 add operational notes. All fit language is best-effort rather than a strict
@@ -217,10 +232,12 @@ Because those list responses contain filenames but not reliable byte sizes, it
 then obtains each selected repository's `blobs=true` metadata with a bounded
 global concurrency of six in-flight requests across both formats. A repository that disappears or
 fails during that second step is excluded; its unverified files are never
-recommended. Each request has a 12-second timeout, while a complete refresh has
-a 30-second deadline that aborts all outstanding work. A refresh-controller
-abort fails the complete refresh atomically rather than returning a partial
-catalogue, so the last valid local catalogue can be served as stale. An empty
+recommended. If more than half of detail requests fail, the refresh is treated
+as materially incomplete and fails atomically rather than replacing the last
+valid catalogue with a severely truncated one. Each request has a 12-second
+timeout, while a complete refresh has a 30-second deadline that aborts all
+outstanding work. A refresh-controller abort fails the complete refresh
+atomically so the last valid local catalogue can be served as stale. An empty
 usable catalogue also fails the full refresh.
 
 Next.js `unstable_cache` wraps the complete production refresh under a stable

@@ -38,6 +38,25 @@ test("MLX exclusion counts remain at repository snapshot level", () => {
   assert.deepEqual(normalizationExclusions([model], "mlx"), { invalidSize: 1 });
 });
 
+test("catalogue excludes non-chat tasks and non-standalone GGUF files", () => {
+  const multimodal = { id: "org/Vision-GGUF", pipeline_tag: "image-text-to-text", siblings: [{ rfilename: "vision.gguf", size: 4_000_000_000 }] };
+  assert.deepEqual(normalizeModels([multimodal], "gguf"), []);
+  assert.deepEqual(normalizationExclusions([multimodal], "gguf"), { unsupportedArtifact: 1 });
+
+  const split = {
+    id: "org/Split-GGUF",
+    pipeline_tag: "text-generation",
+    siblings: [
+      { rfilename: "model-00001-of-00002.gguf", size: 2_000_000_000 },
+      { rfilename: "model-00002-of-00002.gguf", size: 2_000_000_000 },
+      { rfilename: "model.Q4_K_M.gguf", size: 4_000_000_000 },
+      { rfilename: "mmproj-model-f16.gguf", size: 300_000_000 },
+    ],
+  };
+  assert.deepEqual(normalizeModels([split], "gguf").map((item) => item.filename), ["model.Q4_K_M.gguf"]);
+  assert.deepEqual(normalizationExclusions([split], "gguf"), { unsupportedArtifact: 3 });
+});
+
 function upstream(options: { unavailableModel?: string } = {}) {
   return async (url: string) => {
     if (url.includes("?full=true")) return Response.json(url.includes("author=mlx-community") ? [listedMlxModel] : [listedModel]);
@@ -66,6 +85,16 @@ test("catalogue refresh uses blob metadata, tolerates an unavailable repository,
   const partial = await retrieveCatalogue(upstream({ unavailableModel: "org/Model-GGUF" }) as typeof fetch);
   assert.deepEqual(partial.items.map((item) => item.format), ["mlx"]);
   await assert.rejects(retrieveCatalogue((async () => new Response(null, { status: 503 })) as typeof fetch));
+});
+
+test("catalogue refresh rejects a materially incomplete metadata sample", async () => {
+  const models = Array.from({ length: 4 }, (_, index) => ({ id: `org/Partial-${index}-GGUF` }));
+  const incomplete = async (url: string) => {
+    if (url.includes("?full=true")) return Response.json(url.includes("author=mlx-community") ? [listedMlxModel] : models);
+    if (url.includes("Partial-0") || url.includes("Partial-1") || url.includes("Partial-2")) return new Response(null, { status: 503 });
+    return Response.json(listedMlxModel);
+  };
+  await assert.rejects(retrieveCatalogue(incomplete as typeof fetch), /materially incomplete/);
 });
 
 test("catalogue refresh fails atomically when its deadline aborts metadata retrieval", async () => {
