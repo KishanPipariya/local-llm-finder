@@ -6,7 +6,7 @@ import { chipProfiles, runtimes, validateConfig, type MacConfig } from "../lib/h
 import { CatalogueCache, isFresh } from "../lib/catalogue-cache";
 import { normalizationExclusions, normalizeModels, REFRESH_TIMEOUT_MS, retrieveCatalogue } from "../lib/catalogue";
 import { createPostHandler } from "../app/api/recommendations/route";
-import { CatalogueUnavailableError } from "../lib/recommendation-service";
+import { CatalogueUnavailableError, getRecommendations } from "../lib/recommendation-service";
 
 const mac: MacConfig = { chip: "m4", memoryGb: 16, diskGb: 12, workload: "coding" };
 const gguf: Artifact = { id: "org/Coder-7B-GGUF/model.Q4_K_M.gguf", modelId: "org/Coder-7B-GGUF", title: "Coder 7B", format: "gguf", sizeBytes: 5_000_000_000, sizeGb: 5, paramsB: 7, downloads: 3000, updatedAt: "2026-08-01T00:00:00Z", gated: false, tags: ["code"], repositoryUrl: "https://huggingface.co/org/Coder-7B-GGUF", sourceUrl: "https://huggingface.co/org/Coder-7B-GGUF/resolve/main/model.Q4_K_M.gguf", filename: "model.Q4_K_M.gguf" };
@@ -20,6 +20,29 @@ test("accepts every chip's supported memory options and rejects impossible pairs
   assert.equal(validateConfig({ ...mac, chip: "m6", memoryGb: 16 }).valid, false);
   assert.equal(validateConfig({ ...mac, chip: { family: "m4" }, memoryGb: 16 }).valid, false);
   assert.equal(validateConfig({ ...mac, diskGb: 0 }).valid, false);
+});
+test("recommendation service translates catalogue failures and merges catalogue exclusions", async () => {
+  const refreshedAt = "2026-08-14T00:00:00Z";
+  const result = await getRecommendations(mac, async () => ({
+    catalogue: {
+      items: [gguf],
+      refreshedAt,
+      exclusions: { invalidSize: 2, unsupportedArtifact: 1 },
+    },
+    stale: true,
+  }), Date.parse(refreshedAt));
+  assert.equal(result.refreshedAt, refreshedAt);
+  assert.equal(result.stale, true);
+  assert.equal(result.recommendations.length, 1);
+  assert.equal(result.exclusions.invalidSize, 2);
+  assert.equal(result.exclusions.unsupportedArtifact, 1);
+
+  await assert.rejects(
+    getRecommendations(mac, async () => { throw new Error("offline"); }),
+    (error: unknown) => error instanceof CatalogueUnavailableError
+      && error.cause instanceof Error
+      && error.cause.message === "offline",
+  );
 });
 test("uses conservative lower-bound bandwidth for configurable Max variants", () => {
   assert.equal(chipProfiles.m3Max.bandwidthGbps, 300);

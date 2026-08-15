@@ -21,14 +21,14 @@ export function mergeExclusions(ranking: ExclusionSummary, catalogue: Partial<Ex
   return ranking;
 }
 
-export async function getRecommendations(config: MacConfig): Promise<RecommendationResult> {
+export async function getRecommendations(config: MacConfig, getCatalogueFn = getCatalogue, now?: number): Promise<RecommendationResult> {
   let cached;
   try {
-    cached = await getCatalogue();
+    cached = await getCatalogueFn();
   } catch (error) {
     throw new CatalogueUnavailableError(undefined, { cause: error });
   }
-  const ranked = rankArtifactsWithExplanations(cached.catalogue.items, config);
+  const ranked = rankArtifactsWithExplanations(cached.catalogue.items, config, now ?? Date.now());
   mergeExclusions(ranked.exclusions, cached.catalogue.exclusions);
   return { ...ranked, refreshedAt: cached.catalogue.refreshedAt, stale: cached.stale };
 }

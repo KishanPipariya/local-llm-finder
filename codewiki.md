@@ -100,7 +100,7 @@ and long links and disclosure summaries wrap rather than overflow.
 | `lib/recommendations.ts` | Pure memory and pace estimates, eligibility, scoring, ranking, and runtime guidance. |
 | `lib/recommendation-service.ts` | Composition layer joining catalogue retrieval to ranking and safely merging typed exclusion counts. |
 | `lib/catalogue.ts` | Stable retrieval facade: server-side Hugging Face retrieval, metadata normalization, and framework-cache composition. |
-| `lib/catalogue-request.ts` | Shared upstream timeout, JSON request, and bounded-concurrency helpers. |
+| `lib/catalogue-request.ts` | Shared upstream timeout, bounded JSON-response, and bounded-concurrency helpers. |
 | `lib/catalogue-cache.ts` | Six-hour, process-local cache with request coalescing, stale fallback, and retry backoff. |
 | `tests/recommendations.test.ts` | Node tests for domain logic, ranking, cache behavior, and API statuses. |
 | `tests/request.test.ts` | Node tests for GET parsing and GET/POST validation parity. |
@@ -162,7 +162,8 @@ artifacts.
   runtime recipe downloads into a fresh temporary directory (`curl` for an
   unpinned ungated GGUF file, `hf` for pinned or gated files and MLX snapshots), uses an
   artifact-specific local model name, and shell-quotes catalogue-controlled
-  values; arbitrary Hugging Face files never use `ollama pull` or a catalogue
+  values; unsafe control-character and traversal paths are discarded before
+  guidance is built; arbitrary Hugging Face files never use `ollama pull` or a catalogue
   search command. `sourceUrl` remains the exact GGUF download or MLX
   repository URL used by installation guidance, while optional `viewUrl`
   points to the human-facing Hugging Face file or repository viewer. Model
@@ -259,7 +260,7 @@ newer repositories a chance to enter the bounded detail crawl without making
 refresh latency unbounded.
 Because those list responses contain filenames but not reliable byte sizes, it
 then obtains each selected repository's `blobs=true` metadata with a bounded
-global concurrency of six in-flight requests across both formats. A repository that disappears or
+global concurrency of six in-flight requests across both formats. Each upstream response is capped at 8 MiB and each repository is capped at 20,000 metadata files before normalization. A repository that disappears or
 fails during that second step is excluded; its unverified files are never
 recommended. The detail response also supplies optional model configuration and
 GGUF context metadata used to verify the selected context preset. If more than half of detail requests fail overall, more than half

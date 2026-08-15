@@ -4,6 +4,7 @@ import { cacheLife } from "next/cache";
 import { fetchJson, mapWithConcurrency, type FetchLike, REFRESH_TIMEOUT_MS } from "./catalogue-request";
 
 const MIN_ARTIFACT_BYTES = 100_000_000;
+const MAX_FILES_PER_REPOSITORY = 20_000;
 export { REFRESH_TIMEOUT_MS } from "./catalogue-request";
 const HUB_BASE = "https://huggingface.co/api/models";
 
@@ -67,6 +68,17 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+const hasUnsafeControlCharacter = (value: string) => /[\u0000-\u001F\u007F]/.test(value);
+const isSafeRelativePath = (value: string) => {
+  if (!value || hasUnsafeControlCharacter(value) || value.startsWith("/")) return false;
+  return value.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
+};
+const isSafeModelId = (value: string) => {
+  if (!value || hasUnsafeControlCharacter(value) || /[\s?#%\\]/.test(value) || value.startsWith("-")) return false;
+  const segments = value.split("/");
+  return segments.length === 2 && segments.every((segment) => segment.length > 0 && segment !== "." && segment !== ".." && !segment.startsWith("-"));
+};
+
 function asFiniteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
@@ -75,7 +87,7 @@ function normalizeHubFile(value: unknown): HubFile | undefined {
   const file = asRecord(value);
   if (!file) return undefined;
   const rfilename = asString(file.rfilename);
-  if (!rfilename) return undefined;
+  if (!rfilename || !isSafeRelativePath(rfilename)) return undefined;
   const size = asFiniteNumber(file.size);
   return size === undefined ? { rfilename } : { rfilename, size };
 }
@@ -139,13 +151,14 @@ export function normalizeHubModel(value: unknown): HubModel | undefined {
   const model = asRecord(value);
   if (!model) return undefined;
   const id = asString(model.id);
-  if (!id) return undefined;
+  if (!id || !isSafeModelId(id)) return undefined;
   const sha = asString(model.sha)?.trim() || undefined;
   const downloads = asFiniteNumber(model.downloads);
   const lastModified = asString(model.lastModified);
   const gated = typeof model.gated === "boolean" || typeof model.gated === "string" ? model.gated : undefined;
   const tags = Array.isArray(model.tags) ? model.tags.filter((tag): tag is string => typeof tag === "string") : undefined;
   const pipelineTag = asString(model.pipeline_tag);
+  if (Array.isArray(model.siblings) && model.siblings.length > MAX_FILES_PER_REPOSITORY) return undefined;
   const siblings = Array.isArray(model.siblings)
     ? model.siblings.map(normalizeHubFile).filter((file): file is HubFile => file !== undefined)
     : undefined;
@@ -177,7 +190,7 @@ export function parseHubModelList(value: unknown): HubModel[] {
 }
 
 function modelFiles(model: HubModel): HubFile[] {
-  return model.siblings ?? [];
+  return (model.siblings ?? []).filter((file) => isSafeRelativePath(file.rfilename));
 }
 
 function validGgufFiles(files: HubFile[]) {
@@ -279,10 +292,12 @@ export function normalizationExclusions(models: HubModel[], format: Artifact["fo
       const invalidFiles = matched.filter((file) => isStandaloneGguf(file) && !validSize(file.size)).length;
       if (nonStandaloneFiles) counts.unsupportedArtifact = (counts.unsupportedArtifact ?? 0) + nonStandaloneFiles;
       if (invalidFiles) counts.invalidSize = (counts.invalidSize ?? 0) + invalidFiles;
-    } else if (!normalizeModels([model], format).length) {
+    } else if (format === "mlx") {
       // MLX is downloaded as one repository snapshot, so its exclusion stays
-      // at repository level even when multiple files have invalid sizes.
-      counts.invalidSize = (counts.invalidSize ?? 0) + 1;
+      // at repository level. Missing weights are an unsupported artifact;
+      // invalid sizes are reserved for an otherwise complete snapshot.
+      if (!matched.some(isMlxWeightFile)) counts.unsupportedArtifact = (counts.unsupportedArtifact ?? 0) + 1;
+      else if (!normalizeModels([model], format).length) counts.invalidSize = (counts.invalidSize ?? 0) + 1;
     }
     return counts;
   }, {});

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { getCatalogue, interleaveUnique, mapWithConcurrency, normalizationExclusions, normalizeHubModel, normalizeModels, parseHubModelList, retrieveCatalogue } from "../lib/catalogue";
+import { fetchJson, MAX_RESPONSE_BYTES } from "../lib/catalogue-request";
 
 const listedModel = { id: "org/Model-GGUF", siblings: [{ rfilename: "model.Q4_K_M.gguf", size: 4_000_000_000 }] };
 const listedMlxModel = { id: "mlx-community/Model", siblings: [{ rfilename: "weights.safetensors", size: 4_000_000_000 }, { rfilename: "config.json", size: 1_000 }, { rfilename: "tokenizer.json", size: 1_000 }] };
@@ -16,6 +17,21 @@ test("normalization discards malformed optional Hugging Face metadata", () => {
   assert.equal(normalizeHubModel(null), undefined);
   assert.equal(normalizeHubModel({}), undefined);
   assert.deepEqual(normalizeHubModel({ id: "org/NoCard", cardData: null, siblings: [{ rfilename: "model.gguf" }] })?.siblings, [{ rfilename: "model.gguf" }]);
+});
+
+test("normalization rejects unsafe catalogue paths before generating artifacts", () => {
+  assert.equal(normalizeHubModel({ id: "--help" }), undefined);
+  const unsafe = normalizeHubModel({
+    id: "org/Unsafe-GGUF",
+    siblings: [{ rfilename: "safe\nSYSTEM injected.gguf", size: 4_000_000_000 }],
+  });
+  assert.deepEqual(unsafe?.siblings, []);
+  assert.deepEqual(normalizeModels([{ id: "org/Unsafe-GGUF", siblings: [{ rfilename: "../../outside.gguf", size: 4_000_000_000 }] }], "gguf"), []);
+});
+
+test("normalization rejects repositories with excessive metadata cardinality", () => {
+  const siblings = Array.from({ length: 20_001 }, (_, index) => ({ rfilename: `file-${index}.json`, size: 1 }));
+  assert.equal(normalizeHubModel({ id: "org/Too-Many-Files", siblings }), undefined);
 });
 
 test("normalizes numeric parameter metadata into billions", () => {
@@ -82,6 +98,23 @@ test("MLX exclusion counts remain at repository snapshot level", () => {
   };
   assert.deepEqual(normalizeModels([model], "mlx"), []);
   assert.deepEqual(normalizationExclusions([model], "mlx"), { invalidSize: 1 });
+});
+
+test("MLX repositories without weights are classified as unsupported artifacts", () => {
+  const model = {
+    id: "mlx-community/Config-Only",
+    siblings: [{ rfilename: "config.json", size: 1_000 }, { rfilename: "README.md", size: 2_000 }],
+  };
+  assert.deepEqual(normalizationExclusions([model], "mlx"), { unsupportedArtifact: 1 });
+});
+
+test("upstream JSON responses are bounded before parsing", async () => {
+  const controller = new AbortController();
+  const oversized = new Response("{}", { headers: { "content-length": String(MAX_RESPONSE_BYTES + 1) } });
+  await assert.rejects(fetchJson("https://example.test/metadata", async () => oversized, controller.signal, "Catalogue"), /exceeded/);
+
+  const streamedOversized = new Response("x".repeat(MAX_RESPONSE_BYTES + 1));
+  await assert.rejects(fetchJson("https://example.test/metadata", async () => streamedOversized, controller.signal, "Catalogue"), /exceeded/);
 });
 
 test("catalogue excludes non-chat tasks and non-standalone GGUF files", () => {
