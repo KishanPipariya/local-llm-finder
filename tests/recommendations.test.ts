@@ -8,7 +8,7 @@ import { normalizationExclusions, normalizeModels, REFRESH_TIMEOUT_MS, retrieveC
 import { createPostHandler } from "../app/api/recommendations/route";
 import { CatalogueUnavailableError, getRecommendations } from "../lib/recommendation-service";
 
-const mac: MacConfig = { chip: "m4", memoryGb: 16, diskGb: 12, workload: "coding" };
+const mac: MacConfig = { chip: "m4", memoryGb: 16, diskGb: 40, workload: "coding" };
 const gguf: Artifact = { id: "org/Coder-7B-GGUF/model.Q4_K_M.gguf", modelId: "org/Coder-7B-GGUF", title: "Coder 7B", format: "gguf", sizeBytes: 5_000_000_000, sizeGb: 5, paramsB: 7, downloads: 3000, updatedAt: "2026-08-01T00:00:00Z", gated: false, tags: ["code"], repositoryUrl: "https://huggingface.co/org/Coder-7B-GGUF", sourceUrl: "https://huggingface.co/org/Coder-7B-GGUF/resolve/main/model.Q4_K_M.gguf", filename: "model.Q4_K_M.gguf" };
 const mlx: Artifact = { ...gguf, id: "mlx-community/Coder-7B-4bit", modelId: "mlx-community/Coder-7B-4bit", format: "mlx", sizeBytes: 4_500_000_000, sizeGb: 4.5, filename: undefined };
 
@@ -67,8 +67,8 @@ test("filters artifacts to a chosen runtime while requests without a runtime rem
 });
 test("context presets increase conservative memory use and can exclude a former fit", () => {
   const contextSensitive = { ...gguf, sizeBytes: 12_900_000_000, sizeGb: 12.9, paramsB: undefined };
-  const small = rankArtifacts([contextSensitive], { ...mac, memoryGb: 16, diskGb: 20, context: "small" })[0];
-  const long = rankArtifacts([contextSensitive], { ...mac, memoryGb: 16, diskGb: 20, context: "long" });
+  const small = rankArtifacts([contextSensitive], { ...mac, runtime: "llamaCpp", memoryGb: 16, diskGb: 20, context: "small" })[0];
+  const long = rankArtifacts([contextSensitive], { ...mac, runtime: "llamaCpp", memoryGb: 16, diskGb: 20, context: "long" });
   assert.ok(small.memoryGb < 16);
   assert.equal(long.length, 0);
   assert.equal(small.explanation.fit.memory.headroomGb, Math.round((16 - small.memoryGb) * 10) / 10);
@@ -86,7 +86,7 @@ test("validates optional runtime and context preferences without requiring them 
   assert.equal(validateConfig({ ...mac, runtime: "other" }).valid, false);
   assert.equal(validateConfig({ ...mac, context: "huge" }).valid, false);
 });
-test("enforces operational disk headroom and estimates from exact bytes", () => { assert.equal(rankArtifacts([gguf], { ...mac, diskGb: 6.249999999 }).length, 0); assert.equal(rankArtifacts([gguf], { ...mac, diskGb: 6.25 }).length, 1); assert.ok(estimateMemoryGb({ ...gguf, sizeGb: 1 }) > 5); });
+test("enforces runtime-aware operational disk headroom and estimates from exact bytes", () => { assert.equal(rankArtifacts([gguf], { ...mac, runtime: "ollama", diskGb: 12.499999999 }).length, 0); assert.equal(rankArtifacts([gguf], { ...mac, runtime: "ollama", diskGb: 12.5 }).length, 1); assert.equal(rankArtifacts([gguf], { ...mac, runtime: "llamaCpp", diskGb: 6.25 }).length, 1); assert.ok(estimateMemoryGb({ ...gguf, sizeGb: 1 }) > 5); });
 test("ranks coding models and carries gated and licence warnings plus runtime commands", () => { const generic = { ...gguf, id: "org/Chat-8B-GGUF", modelId: "org/Chat-8B-GGUF", title: "Chat 8B", paramsB: 8, tags: [] }; const gated = { ...gguf, gated: true, licence: "apache-2.0" }; const ranked = rankArtifacts([generic, gated], mac); assert.equal(ranked[0].title, "Coder 7B"); assert.ok(ranked[0].notes.some((note) => note.startsWith("Gated"))); assert.ok(ranked[0].notes.some((note) => note.startsWith("Licence: apache-2.0"))); assert.ok(ranked[0].guidance.some((g) => g.runtime === "llama.cpp" && g.command.includes("hf auth login") && g.command.includes("-m"))); });
 test("uses Hugging Face task metadata as a bounded workload preference", () => {
   const coding = { ...gguf, id: "org/Code-GGUF/file.gguf", modelId: "org/Code-GGUF", title: "Plain model", tags: ["coding"], pipelineTag: undefined };
@@ -208,16 +208,16 @@ test("ignores parameter metadata that is implausible for the artifact size", () 
   const spoofed = normalizeModels([{ id: "new/Definitely-Coder-999B-GGUF", downloads: 0, lastModified: "2026-08-14T00:00:00Z", pipeline_tag: "text-generation", cardData: { params: "999B" }, siblings: [{ rfilename: "model.Q4.gguf", size: 100_000_000 }] }], "gguf")[0];
   assert.equal(spoofed.paramsB, undefined);
   const real = normalizeModels([{ id: "org/Real-Coder-7B-GGUF", downloads: 100_000, lastModified: "2026-08-14T00:00:00Z", pipeline_tag: "text-generation", cardData: { params: "7B" }, siblings: [{ rfilename: "model.Q4.gguf", size: 5_000_000_000 }] }], "gguf")[0];
-  assert.equal(rankArtifacts([spoofed, real], { ...mac, diskGb: 10 }, Date.parse("2026-08-14T00:00:00Z"))[0].title, "Real-Coder-7B");
+  assert.equal(rankArtifacts([spoofed, real], { ...mac, runtime: "llamaCpp", diskGb: 10 }, Date.parse("2026-08-14T00:00:00Z"))[0].title, "Real-Coder-7B");
 });
 test("keeps non-gated runtime guidance unchanged", () => {
   assert.doesNotMatch(buildGuidance(gguf, ["Ollama"])[0].command, /hf auth login/);
   assert.doesNotMatch(buildGuidance(mlx, ["MLX"])[0].command, /hf auth login/);
 });
 test("warns about near disk and memory limits without changing eligibility", () => {
-  const diskNearLimit = rankArtifacts([{ ...gguf, sizeBytes: 9_000_000_000, sizeGb: 9 }], { ...mac, diskGb: 11.5, memoryGb: 16 })[0];
+  const diskNearLimit = rankArtifacts([{ ...gguf, sizeBytes: 9_000_000_000, sizeGb: 9 }], { ...mac, runtime: "ollama", diskGb: 23.5, memoryGb: 16 })[0];
   assert.ok(diskNearLimit.notes.some((note) => note.startsWith("Near disk limit")));
-  const memoryNearLimit = rankArtifacts([{ ...gguf, sizeBytes: 12_000_000_000, sizeGb: 12, paramsB: undefined }], { ...mac, diskGb: 20, memoryGb: 16 })[0];
+  const memoryNearLimit = rankArtifacts([{ ...gguf, sizeBytes: 12_000_000_000, sizeGb: 12, paramsB: undefined }], { ...mac, runtime: "llamaCpp", diskGb: 20, memoryGb: 16 })[0];
   assert.ok(memoryNearLimit, "an artifact below the existing memory threshold remains eligible");
   assert.ok(memoryNearLimit.notes.some((note) => note.startsWith("Near memory limit")));
 });
@@ -225,7 +225,7 @@ test("returns typed fit explanations and actionable exclusion categories", () =>
   const tooLarge = { ...gguf, id: "org/Large-GGUF/file.gguf", modelId: "org/Large-GGUF", sizeBytes: 17_000_000_000, sizeGb: 17 };
   const tooHungry = { ...gguf, id: "org/Memory-GGUF/file.gguf", modelId: "org/Memory-GGUF", sizeBytes: 14_500_000_000, sizeGb: 14.5, paramsB: 100 };
   const invalid = { ...gguf, id: "org/Invalid-GGUF/file.gguf", modelId: "org/Invalid-GGUF", sizeBytes: 0, sizeGb: 0 };
-  const result = rankArtifactsWithExplanations([gguf, tooLarge, tooHungry, invalid], { ...mac, diskGb: 20 });
+  const result = rankArtifactsWithExplanations([gguf, tooLarge, tooHungry, invalid], { ...mac, runtime: "llamaCpp", diskGb: 20 });
   assert.equal(result.exclusions.insufficientDisk, 1);
   assert.equal(result.exclusions.insufficientMemory, 1);
   assert.equal(result.exclusions.insufficientContext, 0);
@@ -370,6 +370,20 @@ test("failed background refreshes stay stale and respect retry backoff", async (
   now += 60_000;
   assert.equal((await stale.get()).stale, true);
   assert.equal(staleCalls, 2);
+});
+test("stale refreshes use the supplied scheduler so hosts can keep work alive after response", async () => {
+  let scheduled = 0;
+  let calls = 0;
+  const now = Date.parse("2026-08-02T00:00:00Z");
+  const oldCatalogue = { items: [gguf], refreshedAt: "2026-08-01T00:00:00Z" };
+  const freshCatalogue = { items: [{ ...gguf, id: "org/Scheduled-GGUF/model.gguf" }], refreshedAt: "2026-08-02T00:00:00Z" };
+  const cache = new CatalogueCache(async () => { calls += 1; return freshCatalogue; }, 1, () => now, 60_000, (task) => { scheduled += 1; task(); });
+  (cache as unknown as { state: typeof oldCatalogue }).state = oldCatalogue;
+  assert.equal((await cache.get()).stale, true);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(scheduled, 1);
+  assert.equal(calls, 1);
+  assert.equal((await cache.get()).catalogue, freshCatalogue);
 });
 test("resolved stale background refreshes also respect retry backoff", async () => {
   let calls = 0; let now = Date.parse("2026-08-02T00:00:00Z");

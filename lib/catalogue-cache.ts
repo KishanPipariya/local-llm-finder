@@ -2,6 +2,7 @@ import type { Artifact, ExclusionSummary } from "./recommendations";
 
 export type Catalogue = { items: Artifact[]; refreshedAt: string; exclusions?: Partial<ExclusionSummary> };
 export type CatalogueState = Catalogue | undefined;
+export type RefreshScheduler = (task: () => void) => void;
 
 export class CatalogueCache {
   private state: CatalogueState;
@@ -13,13 +14,14 @@ export class CatalogueCache {
     private readonly maxAge = 6 * 60 * 60 * 1000,
     private readonly clock = () => Date.now(),
     private readonly retryDelay = 5 * 60 * 1000,
+    private readonly schedule: RefreshScheduler = (task) => task(),
   ) {}
 
   async get(): Promise<{ catalogue: Catalogue; stale: boolean }> {
     const now = this.clock();
     if (this.state && isFresh(this.state, now, this.maxAge)) return { catalogue: this.state, stale: false };
     if (this.state) {
-      if (now >= this.retryAfter) void this.startRefresh().catch(() => undefined);
+      if (now >= this.retryAfter) this.schedule(() => { void this.startRefresh().catch(() => undefined); });
       return { catalogue: this.state, stale: true };
     }
 

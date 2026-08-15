@@ -44,7 +44,7 @@ export type Recommendation = Artifact & {
 export type WorkloadCategory = "coding-oriented" | "general chat" | "mixed" | "unknown";
 export type RecommendationExplanation = {
   fit: {
-    disk: { availableBytes: number; headroomBytes: number };
+    disk: { availableBytes: number; requiredBytes: number; headroomBytes: number; assumption: string };
     memory: { availableGb: number; headroomGb: number; assumption: string };
     context: { preset: ContextPreset; label: string; requestedTokens: number; maxTokens?: number };
     runtimes: Recommendation["runtimes"];
@@ -64,7 +64,23 @@ const contextOverheadGb: Record<ContextPreset, number> = { small: 0.8, normal: 1
 const contextSurchargeGb: Record<ContextPreset, number> = { small: 0, normal: 0.25, long: 2 };
 const contextLabels: Record<ContextPreset, string> = { small: "Small", normal: "Normal", long: "Long" };
 const contextTokens: Record<ContextPreset, number> = { small: 4_096, normal: 16_384, long: 32_768 };
-const operationalDiskHeadroom = 1.25;
+const downloadDiskHeadroom = 1.25;
+const ollamaImportDiskHeadroom = 2.5;
+
+function diskHeadroomFactor(config: MacConfig, artifact: Artifact) {
+  // Ollama uploads the downloaded GGUF into its content-addressed model store
+  // during `ollama create`, so the source and imported blob can coexist. Keep
+  // the existing 20% reserve on top of that temporary second copy.
+  return artifact.format === "gguf" && (config.runtime === "ollama" || config.runtime === undefined)
+    ? ollamaImportDiskHeadroom
+    : downloadDiskHeadroom;
+}
+
+function diskAssumption(config: MacConfig, artifact: Artifact) {
+  return artifact.format === "gguf" && (config.runtime === "ollama" || config.runtime === undefined)
+    ? "Download plus temporary Ollama import copy, with 20% free-space reserve."
+    : "Download plus temporary working space, with 20% free-space reserve.";
+}
 
 export function runtimeEligibility(config: MacConfig, artifact: Artifact): Recommendation["runtimes"] {
   if (artifact.format === "mlx") return ["MLX"];
@@ -242,7 +258,9 @@ export function rankArtifactsWithExplanations(artifacts: Artifact[], config: Mac
     const memoryGb = estimateMemoryGb(item, context);
     if (!Number.isSafeInteger(item.sizeBytes) || item.sizeBytes <= 0) { exclusions.invalidSize += 1; return []; }
     if (!runtimes.length) { exclusions.unsupportedFormat += 1; return []; }
-    if (item.sizeBytes * operationalDiskHeadroom > config.diskGb * 1e9) { exclusions.insufficientDisk += 1; return []; }
+    const availableDiskBytes = config.diskGb * 1e9;
+    const requiredDiskBytes = item.sizeBytes * diskHeadroomFactor(config, item);
+    if (requiredDiskBytes > availableDiskBytes) { exclusions.insufficientDisk += 1; return []; }
     if (memoryGb > config.memoryGb) { exclusions.insufficientMemory += 1; return []; }
     if (item.maxContextTokens !== undefined && item.maxContextTokens < contextTokens[context]) { exclusions.insufficientContext += 1; return []; }
     const tight = memoryGb > config.memoryGb * 0.82;
@@ -255,9 +273,9 @@ export function rankArtifactsWithExplanations(artifacts: Artifact[], config: Mac
     const performance: Recommendation["performance"] = slow ? "Likely slow" : tight ? "Tight memory" : "Comfortable";
     const pace = expectedPace(profile, memoryGb);
     const category = workloadCategory(item);
-    const diskHeadroom = Math.round((config.diskGb * 1e9 - item.sizeBytes) / 1e6) * 1e6;
+    const diskHeadroom = Math.round((availableDiskBytes - requiredDiskBytes) / 1e6) * 1e6;
     const memoryHeadroom = Math.round((config.memoryGb - memoryGb) * 10) / 10;
-    if (diskHeadroom / (config.diskGb * 1e9) < 0.25) notes.push("Near disk limit: only 20–25% free space remains after download; importing may need temporary disk space.");
+    if (diskHeadroom / availableDiskBytes < 0.25) notes.push("Near disk limit: only 20–25% free space remains after the download/import estimate.");
     if (memoryHeadroom < 2) notes.push("Near memory limit: less than 2 GB of estimated unified-memory headroom remains.");
     const rankingFactors = [
       workloadRelevance(category, config.workload),
@@ -268,7 +286,7 @@ export function rankArtifactsWithExplanations(artifacts: Artifact[], config: Mac
       "More recently updated catalogue entries receive a small, bounded freshness signal.",
       "Download count is used as a light popularity signal, not a quality benchmark.",
     ];
-    return [{ ...item, runtimes, memoryGb, performance, pace, notes, why: `${item.paramsB ? `${item.paramsB}B parameters` : "A current compact model"}; ${workloadRelevance(category, config.workload)} It leaves ${memoryHeadroom.toFixed(1)} GB of estimated memory headroom at the ${contextLabels[context].toLowerCase()} context preset.`, guidance: buildGuidance(item, runtimes), explanation: { fit: { disk: { availableBytes: config.diskGb * 1e9, headroomBytes: diskHeadroom }, memory: { availableGb: config.memoryGb, headroomGb: memoryHeadroom, assumption: `File mapping plus conservative runtime, ${contextLabels[context].toLowerCase()}-context, and KV-cache overhead.` }, context: { preset: context, label: contextLabels[context], requestedTokens: contextTokens[context], maxTokens: item.maxContextTokens }, runtimes, workload: { category, relevance: workloadRelevance(category, config.workload) }, pace: { bandwidthGbps: profile.bandwidthGbps, inputs: "Published family memory bandwidth relative to estimated model memory." } }, rankingFactors, familyKey: familyKey(item) } }];
+    return [{ ...item, runtimes, memoryGb, performance, pace, notes, why: `${item.paramsB ? `${item.paramsB}B parameters` : "A current compact model"}; ${workloadRelevance(category, config.workload)} It leaves ${memoryHeadroom.toFixed(1)} GB of estimated memory headroom at the ${contextLabels[context].toLowerCase()} context preset.`, guidance: buildGuidance(item, runtimes), explanation: { fit: { disk: { availableBytes: availableDiskBytes, requiredBytes: requiredDiskBytes, headroomBytes: diskHeadroom, assumption: diskAssumption(config, item) }, memory: { availableGb: config.memoryGb, headroomGb: memoryHeadroom, assumption: `File mapping plus conservative runtime, ${contextLabels[context].toLowerCase()}-context, and KV-cache overhead.` }, context: { preset: context, label: contextLabels[context], requestedTokens: contextTokens[context], maxTokens: item.maxContextTokens }, runtimes, workload: { category, relevance: workloadRelevance(category, config.workload) }, pace: { bandwidthGbps: profile.bandwidthGbps, inputs: "Published family memory bandwidth relative to estimated model memory." } }, rankingFactors, familyKey: familyKey(item) } }];
   });
   const grouped = new Map<string, Recommendation>();
   for (const item of eligible.sort((a, b) => {

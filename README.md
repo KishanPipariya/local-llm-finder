@@ -69,12 +69,14 @@ If neither cache has a valid catalogue, the GET flow shows its temporary error
 and the API returns `503`.
 
 Each framework-cached refresh uses four Hugging Face `full=true` list responses (20 popular
-and 20 recently updated GGUF repositories, plus the same two samples from
+and 20 recently updated repositories filtered by the GGUF format, plus the same two samples from
 `mlx-community`), then requests each selected
 repository's `blobs=true` metadata before normalizing it. There are no
 non-Hugging-Face catalogue requests. MLX sizes represent the complete snapshot
 download and are rejected when any repository file has an unknown size; imports
-may also need temporary free disk space beyond the displayed download size.
+may also need temporary free disk space beyond the displayed download size. GGUF
+results that may use Ollama reserve a larger operational disk estimate for the
+download and temporary import copy.
 
 ## Run locally
 

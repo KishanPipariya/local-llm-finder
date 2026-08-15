@@ -1,6 +1,7 @@
-import { CatalogueCache, type Catalogue } from "./catalogue-cache";
+import { CatalogueCache, type Catalogue, type RefreshScheduler } from "./catalogue-cache";
 import type { Artifact, ExclusionSummary } from "./recommendations";
 import { cacheLife } from "next/cache";
+import { after } from "next/server";
 import { fetchJson, mapWithConcurrency, type FetchLike, REFRESH_TIMEOUT_MS } from "./catalogue-request";
 
 const MIN_ARTIFACT_BYTES = 100_000_000;
@@ -43,13 +44,15 @@ const validSize = (size: unknown): size is number => typeof size === "number" &&
 const knownFileSize = (size: unknown): size is number => typeof size === "number" && Number.isSafeInteger(size) && size > 0;
 const isMlxWeightFile = (file: HubFile) => /(?:^|\/)[^/]+\.safetensors$/i.test(file.rfilename) && knownFileSize(file.size);
 const supportedPipelineTags = new Set(["text-generation", "text2text-generation", "conversational"]);
+const textModelSignal = /(?:^|[^a-z])(?:instruct|chat|assistant|conversation|code|coder|coding|programming|llm|language-model|gguf|mlx-community|qwen|llama|mistral|gemma|phi|deepseek)(?:$|[^a-z])/i;
 const isSupportedTask = (model: HubModel) => {
   const task = model.pipeline_tag?.trim().toLowerCase();
-  // Missing task metadata is common for quantized repositories, so retain it
-  // as an unknown/neutral candidate. An explicit task must be one of the
-  // supported text-generation families; failing closed prevents newly added
-  // non-chat Hugging Face tasks from entering the local-chat catalogue.
-  return !task || supportedPipelineTags.has(task);
+  if (task) return supportedPipelineTags.has(task);
+  // Quantized repositories sometimes omit pipeline metadata. Require a
+  // lightweight text/chat/coding signal before admitting those repositories;
+  // this keeps image, audio, and generic binary artifacts out of the finder.
+  return Boolean(model.gguf?.chat_template)
+    || textModelSignal.test(`${model.id} ${(model.tags ?? []).join(" ")}`);
 };
 const isGgufShard = (file: HubFile) => /(?:^|[-_.])\d{5}-of-\d{5}\.gguf$/i.test(file.rfilename);
 const isGgufAuxiliary = (file: HubFile) => /(?:^|[._/-])(?:mmproj|imatrix|adapter|lora|tokenizer|vocab)(?:[._/-]|$)/i.test(file.rfilename);
@@ -283,8 +286,7 @@ export function normalizationExclusions(models: HubModel[], format: Artifact["fo
   return models.reduce<Partial<ExclusionSummary>>((counts, model) => {
     const files = modelFiles(model);
     const matched = format === "gguf" ? files.filter((file) => /\.gguf$/i.test(file.rfilename)) : files;
-    if (!isSupportedTask(model)) counts.unsupportedArtifact = (counts.unsupportedArtifact ?? 0) + 1;
-    else if (!matched.length) counts.unsupportedFormat = (counts.unsupportedFormat ?? 0) + 1;
+    if (!matched.length) counts.unsupportedFormat = (counts.unsupportedFormat ?? 0) + 1;
     else if (format === "gguf") {
       // A GGUF file becomes its own recommendation, so account for every
       // rejected file even when its repository has valid alternatives.
@@ -292,13 +294,14 @@ export function normalizationExclusions(models: HubModel[], format: Artifact["fo
       const invalidFiles = matched.filter((file) => isStandaloneGguf(file) && !validSize(file.size)).length;
       if (nonStandaloneFiles) counts.unsupportedArtifact = (counts.unsupportedArtifact ?? 0) + nonStandaloneFiles;
       if (invalidFiles) counts.invalidSize = (counts.invalidSize ?? 0) + invalidFiles;
+      if (!nonStandaloneFiles && !invalidFiles && !isSupportedTask(model)) counts.unsupportedArtifact = (counts.unsupportedArtifact ?? 0) + 1;
     } else if (format === "mlx") {
       // MLX is downloaded as one repository snapshot, so its exclusion stays
       // at repository level. Missing weights are an unsupported artifact;
       // invalid sizes are reserved for an otherwise complete snapshot.
-      if (!matched.some(isMlxWeightFile)) counts.unsupportedArtifact = (counts.unsupportedArtifact ?? 0) + 1;
+      if (!matched.some(isMlxWeightFile) || !isSupportedTask(model)) counts.unsupportedArtifact = (counts.unsupportedArtifact ?? 0) + 1;
       else if (!normalizeModels([model], format).length) counts.invalidSize = (counts.invalidSize ?? 0) + 1;
-    }
+    } else if (!isSupportedTask(model)) counts.unsupportedArtifact = (counts.unsupportedArtifact ?? 0) + 1;
     return counts;
   }, {});
 }
@@ -345,8 +348,8 @@ export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeo
     // format.
     const listBase = `${HUB_BASE}?full=true&limit=20&direction=-1`;
     const [popularGguf, recentGguf, popularMlx, recentMlx] = await Promise.all([
-      fetchJson(`${listBase}&sort=downloads&search=GGUF`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
-      fetchJson(`${listBase}&sort=lastModified&search=GGUF`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
+      fetchJson(`${listBase}&sort=downloads&filter=gguf`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
+      fetchJson(`${listBase}&sort=lastModified&filter=gguf`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
       fetchJson(`${listBase}&sort=downloads&author=mlx-community`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
       fetchJson(`${listBase}&sort=lastModified&author=mlx-community`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
     ]);
@@ -400,5 +403,6 @@ async function cachedCatalogueRefresh(): Promise<Catalogue> {
   return retrieveCatalogue();
 }
 
-const cache = new CatalogueCache(cachedCatalogueRefresh);
+const scheduleRefresh: RefreshScheduler = (task) => after(task);
+const cache = new CatalogueCache(cachedCatalogueRefresh, undefined, undefined, undefined, scheduleRefresh);
 export const getCatalogue = () => cache.get();

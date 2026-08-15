@@ -141,6 +141,10 @@ test("catalogue excludes non-chat tasks and non-standalone GGUF files", () => {
   };
   assert.deepEqual(normalizeModels([split], "gguf").map((item) => item.filename), ["model.Q4_K_M.gguf"]);
   assert.deepEqual(normalizationExclusions([split], "gguf"), { unsupportedArtifact: 3 });
+
+  const noTaskSignal = { id: "org/NoTaskSignal", siblings: [{ rfilename: "weights.gguf", size: 4_000_000_000 }] };
+  assert.deepEqual(normalizeModels([noTaskSignal], "gguf"), [], "metadata-poor artifacts are not admitted without a text-model signal");
+  assert.deepEqual(normalizationExclusions([noTaskSignal], "gguf"), { unsupportedArtifact: 1 });
 });
 
 function upstream(options: { unavailableModel?: string } = {}) {
@@ -171,6 +175,7 @@ test("catalogue refresh uses blob metadata, rejects incomplete format feeds, and
   };
   const catalogue = await retrieveCatalogue(listOnly as typeof fetch);
   assert.deepEqual(catalogue.items.map((item) => item.sizeBytes).sort((a, b) => a - b), [4_000_000_000, 4_000_002_000]);
+  assert.ok(urls.filter((url) => url.includes("?full=true")).every((url) => url.includes("filter=gguf") || url.includes("author=mlx-community")), "GGUF feeds use the format filter rather than a name search");
   assert.equal(urls.filter((url) => url.includes("?blobs=true")).length, 2);
   await assert.rejects(retrieveCatalogue(upstream({ unavailableModel: "org/Model-GGUF" }) as typeof fetch), /gguf metadata refresh was materially incomplete/);
 

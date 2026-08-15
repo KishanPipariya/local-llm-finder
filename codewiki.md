@@ -157,8 +157,9 @@ artifacts.
   present). Split shards and auxiliary `mmproj`, tokenizer, adapter, LoRA, and
   imatrix files are excluded because the exact-file guidance cannot run them by
   themselves. Explicit unknown or incompatible pipeline tasks are excluded;
-  missing task metadata remains eligible but neutral because it is common on
-  quantized repositories. It supports Ollama, LM Studio, and llama.cpp. Each
+  missing task metadata is accepted only when the model has a text/chat/coding
+  or known model-family/format signal in its ID, tags, or GGUF chat-template metadata; otherwise it is counted
+  as an unsupported artifact. It supports Ollama, LM Studio, and llama.cpp. Each
   runtime recipe downloads into a fresh temporary directory (`curl` for an
   unpinned ungated GGUF file, `hf` for pinned or gated files and MLX snapshots), uses an
   artifact-specific local model name, and shell-quotes catalogue-controlled
@@ -176,9 +177,11 @@ artifacts.
   artifact, and the aggregate must meet the 100 MB minimum. This keeps snapshot
   download estimates conservative. Its guidance uses `uvx --from mlx-lm
   mlx_lm.generate`. It supports MLX.
-- Disk fit is operationally strict: the exact artifact must leave at least 20%
-  of the original free disk after download, because imports and temporary working files can need
-  additional space. Recommendations can still warn when headroom is only 20–25%.
+- Disk fit is operationally strict: normal downloads and temporary working files
+  use a 1.25× artifact estimate, while GGUF results that may use Ollama use 2.5×
+  to account for the downloaded file and temporary import copy while preserving
+  20% free disk. Recommendations can still warn when operational headroom is only
+  20–25%, and each card states the assumption used.
 - Memory estimate adds conservative file-mapping, runtime, and context overhead.
   Small (4K tokens) is for short chats, Normal (16K tokens) is the default for
   typical chat/coding, and Long (32K tokens) reserves more headroom for large
@@ -254,7 +257,8 @@ workloads can change the result.
 ## Catalogue lifecycle
 
 `retrieveCatalogue` makes four server-side Hugging Face `full=true` list
-requests: 20 popular and 20 recently updated GGUF repositories, plus the same
+requests: 20 popular and 20 recently updated repositories filtered by the GGUF
+format, plus the same
 two 20-repository samples from `mlx-community`. The interleaved sample gives
 newer repositories a chance to enter the bounded detail crawl without making
 refresh latency unbounded.
@@ -279,6 +283,9 @@ blocks only for the shared refresh budget; without a successful catalogue, the
 error is propagated. Once a catalogue has expired, callers immediately receive
 the prior catalogue with `stale: true` while one shared background refresh runs.
 A successful background refresh replaces the cache and clears the retry backoff.
+A stale response schedules that refresh through Next.js `after()` so supported
+serverless hosts can finish the work after sending the response instead of
+discarding an unawaited promise.
 A failed refresh—or a framework-cache call that resolves only to an already
 stale catalogue—is consumed internally, keeps the prior catalogue stale, and
 waits five minutes before the next refresh attempt, avoiding repeated upstream
