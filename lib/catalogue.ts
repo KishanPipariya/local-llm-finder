@@ -6,6 +6,7 @@ import { fetchJson, mapWithConcurrency, type FetchLike, REFRESH_TIMEOUT_MS } fro
 
 const MIN_ARTIFACT_BYTES = 100_000_000;
 const MAX_FILES_PER_REPOSITORY = 20_000;
+const MAX_GGUF_ARTIFACTS_PER_REPOSITORY = 64;
 export { REFRESH_TIMEOUT_MS } from "./catalogue-request";
 const HUB_BASE = "https://huggingface.co/api/models";
 
@@ -44,7 +45,7 @@ const validSize = (size: unknown): size is number => typeof size === "number" &&
 const knownFileSize = (size: unknown): size is number => typeof size === "number" && Number.isSafeInteger(size) && size > 0;
 const isMlxWeightFile = (file: HubFile) => /(?:^|\/)[^/]+\.safetensors$/i.test(file.rfilename) && knownFileSize(file.size);
 const supportedPipelineTags = new Set(["text-generation", "text2text-generation", "conversational"]);
-const textModelSignal = /(?:^|[^a-z])(?:instruct|chat|assistant|conversation|code|coder|coding|programming|llm|language-model|gguf|mlx-community|qwen|llama|mistral|gemma|phi|deepseek)(?:$|[^a-z])/i;
+const textModelSignal = /(?:^|[^a-z])(?:instruct|chat|assistant|conversation|conversational|code|coder|coding|programming|text-generation|text-model|language-model|llm)(?:$|[^a-z])/i;
 const isSupportedTask = (model: HubModel) => {
   const task = model.pipeline_tag?.trim().toLowerCase();
   if (task) return supportedPipelineTags.has(task);
@@ -52,7 +53,7 @@ const isSupportedTask = (model: HubModel) => {
   // lightweight text/chat/coding signal before admitting those repositories;
   // this keeps image, audio, and generic binary artifacts out of the finder.
   return Boolean(model.gguf?.chat_template)
-    || textModelSignal.test(`${model.id} ${(model.tags ?? []).join(" ")}`);
+    || textModelSignal.test(`${model.id} ${model.cardData?.model_name ?? ""} ${model.cardData?.base_model ?? ""} ${(model.tags ?? []).join(" ")}`);
 };
 const isGgufShard = (file: HubFile) => /(?:^|[-_.])\d{5}-of-\d{5}\.gguf$/i.test(file.rfilename);
 const isGgufAuxiliary = (file: HubFile) => /(?:^|[._/-])(?:mmproj|imatrix|adapter|lora|tokenizer|vocab)(?:[._/-]|$)/i.test(file.rfilename);
@@ -241,7 +242,10 @@ export function normalizeModels(models: HubModel[], format: Artifact["format"]):
     if (!isSupportedTask(model)) return [];
     const files = modelFiles(model);
     const matched = format === "gguf" ? files.filter((file) => /\.gguf$/i.test(file.rfilename)) : files;
-    const selectedFiles = format === "gguf" ? validGgufFiles(matched) : [undefined];
+    // A repository can publish thousands of individually valid GGUF files.
+    // Keep the cached catalogue and per-request ranking work bounded while
+    // retaining a generous deterministic set of the smallest variants.
+    const selectedFiles = format === "gguf" ? validGgufFiles(matched).slice(0, MAX_GGUF_ARTIFACTS_PER_REPOSITORY) : [undefined];
     if (format === "gguf" && !selectedFiles.length) return [];
     // `hf download` snapshots the repository. Count every file, including files
     // not recognised as runtime assets, and reject unknown sizes so disk-fit
@@ -292,9 +296,10 @@ export function normalizationExclusions(models: HubModel[], format: Artifact["fo
       // rejected file even when its repository has valid alternatives.
       const nonStandaloneFiles = matched.filter((file) => !isStandaloneGguf(file)).length;
       const invalidFiles = matched.filter((file) => isStandaloneGguf(file) && !validSize(file.size)).length;
-      if (nonStandaloneFiles) counts.unsupportedArtifact = (counts.unsupportedArtifact ?? 0) + nonStandaloneFiles;
+      const validStandaloneFiles = matched.length - nonStandaloneFiles - invalidFiles;
+      const unsupportedFiles = nonStandaloneFiles + (isSupportedTask(model) ? 0 : validStandaloneFiles);
+      if (unsupportedFiles) counts.unsupportedArtifact = (counts.unsupportedArtifact ?? 0) + unsupportedFiles;
       if (invalidFiles) counts.invalidSize = (counts.invalidSize ?? 0) + invalidFiles;
-      if (!nonStandaloneFiles && !invalidFiles && !isSupportedTask(model)) counts.unsupportedArtifact = (counts.unsupportedArtifact ?? 0) + 1;
     } else if (format === "mlx") {
       // MLX is downloaded as one repository snapshot, so its exclusion stays
       // at repository level. Missing weights are an unsupported artifact;
@@ -377,8 +382,11 @@ export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeo
     }
     const verifiedGgufModels = detailed.filter((entry): entry is { format: "gguf"; model: HubModel } => entry.format === "gguf" && entry.model !== undefined).map((entry) => entry.model);
     const verifiedMlxModels = detailed.filter((entry): entry is { format: "mlx"; model: HubModel } => entry.format === "mlx" && entry.model !== undefined).map((entry) => entry.model);
-    const items = [...normalizeModels(verifiedGgufModels, "gguf"), ...normalizeModels(verifiedMlxModels, "mlx")];
-    if (!items.length) throw new Error("Hugging Face catalogue returned no usable artifacts");
+    const ggufItems = normalizeModels(verifiedGgufModels, "gguf");
+    const mlxItems = normalizeModels(verifiedMlxModels, "mlx");
+    if (!ggufItems.length) throw new Error("Hugging Face GGUF catalogue returned no usable artifacts");
+    if (!mlxItems.length) throw new Error("Hugging Face MLX catalogue returned no usable artifacts");
+    const items = [...ggufItems, ...mlxItems];
     const ggufExclusions = normalizationExclusions(verifiedGgufModels, "gguf");
     const mlxExclusions = normalizationExclusions(verifiedMlxModels, "mlx");
     return {

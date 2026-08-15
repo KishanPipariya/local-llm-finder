@@ -87,6 +87,14 @@ test("validates optional runtime and context preferences without requiring them 
   assert.equal(validateConfig({ ...mac, context: "huge" }).valid, false);
 });
 test("enforces runtime-aware operational disk headroom and estimates from exact bytes", () => { assert.equal(rankArtifacts([gguf], { ...mac, runtime: "ollama", diskGb: 12.499999999 }).length, 0); assert.equal(rankArtifacts([gguf], { ...mac, runtime: "ollama", diskGb: 12.5 }).length, 1); assert.equal(rankArtifacts([gguf], { ...mac, runtime: "llamaCpp", diskGb: 6.25 }).length, 1); assert.ok(estimateMemoryGb({ ...gguf, sizeGb: 1 }) > 5); });
+test("runtime-neutral disk checks retain only the GGUF runtimes that fit", () => {
+  const recommendation = rankArtifacts([gguf], { ...mac, diskGb: 7 })[0];
+  assert.ok(recommendation, "the exact file fits non-Ollama GGUF runtimes");
+  assert.deepEqual(recommendation.runtimes, ["llama.cpp", "LM Studio"]);
+  assert.equal(recommendation.explanation.fit.disk.requiredBytes, gguf.sizeBytes * 1.25);
+  assert.match(recommendation.explanation.fit.disk.assumption, /temporary working space/);
+  assert.equal(recommendation.guidance.some((guide) => guide.runtime === "Ollama"), false);
+});
 test("ranks coding models and carries gated and licence warnings plus runtime commands", () => { const generic = { ...gguf, id: "org/Chat-8B-GGUF", modelId: "org/Chat-8B-GGUF", title: "Chat 8B", paramsB: 8, tags: [] }; const gated = { ...gguf, gated: true, licence: "apache-2.0" }; const ranked = rankArtifacts([generic, gated], mac); assert.equal(ranked[0].title, "Coder 7B"); assert.ok(ranked[0].notes.some((note) => note.startsWith("Gated"))); assert.ok(ranked[0].notes.some((note) => note.startsWith("Licence: apache-2.0"))); assert.ok(ranked[0].guidance.some((g) => g.runtime === "llama.cpp" && g.command.includes("hf auth login") && g.command.includes("-m"))); });
 test("uses Hugging Face task metadata as a bounded workload preference", () => {
   const coding = { ...gguf, id: "org/Code-GGUF/file.gguf", modelId: "org/Code-GGUF", title: "Plain model", tags: ["coding"], pipelineTag: undefined };
@@ -177,16 +185,17 @@ test("uses exact-file LM Studio and mlx-lm installation guidance", () => {
   assert.match(mlxGuidance, /uvx --from mlx-lm mlx_lm\.generate/);
 });
 
-test("pins ungated llama.cpp and MLX downloads to the catalogue revision", () => {
-  const pinnedGguf = { ...gguf, revision: "9f4d7c1" };
+test("uses the exact public GGUF URL and pins MLX downloads to the catalogue revision", () => {
+  const pinnedGguf = { ...gguf, revision: "9f4d7c1", sourceUrl: "https://huggingface.co/org/Coder-7B-GGUF/resolve/9f4d7c1/model.Q4_K_M.gguf" };
   const llama = buildGuidance(pinnedGguf, ["llama.cpp"])[0].command;
-  assert.match(llama, /hf download 'org\/Coder-7B-GGUF' 'model\.Q4_K_M\.gguf' --revision '9f4d7c1'/);
+  assert.match(llama, /curl --fail --location --create-dirs 'https:\/\/huggingface\.co\/org\/Coder-7B-GGUF\/resolve\/9f4d7c1\/model\.Q4_K_M\.gguf'/);
+  assert.doesNotMatch(llama, /hf download/);
   assert.match(llama, /llama-cli -m \"\$workdir\/\"'model\.Q4_K_M\.gguf'/);
   assert.doesNotMatch(llama, /--hf-repo/);
 
   const pinnedMlx = { ...mlx, revision: "a1b2c3" };
   const mlxGuidance = buildGuidance(pinnedMlx, ["MLX"])[0].command;
-  assert.match(mlxGuidance, /hf download 'mlx-community\/Coder-7B-4bit' --revision 'a1b2c3'/);
+  assert.match(mlxGuidance, /uvx hf download --revision 'a1b2c3' --local-dir \"\$workdir\" -- 'mlx-community\/Coder-7B-4bit'/);
   assert.match(mlxGuidance, /--local-dir \"\$workdir\"/);
   assert.match(mlxGuidance, /--model \"\$workdir\"/);
 });
@@ -194,14 +203,21 @@ test("uses authenticated exact-revision downloads for gated artifacts", () => {
   const gated = { ...gguf, gated: true, revision: "9f4d7c1" };
   const ollama = buildGuidance(gated, ["Ollama"])[0].command;
   assert.match(ollama, /hf auth login/);
-  assert.match(ollama, /hf download 'org\/Coder-7B-GGUF' 'model\.Q4_K_M\.gguf' --revision '9f4d7c1'/);
+  assert.match(ollama, /hf download --revision '9f4d7c1' --local-dir \"\$workdir\" -- 'org\/Coder-7B-GGUF' 'model\.Q4_K_M\.gguf'/);
   assert.match(ollama, /ollama create 'local-/);
   assert.doesNotMatch(ollama, /curl -L/);
 
   const gatedMlx = buildGuidance({ ...mlx, gated: true, revision: "a1b2c3" }, ["MLX"])[0].command;
-  assert.match(gatedMlx, /hf auth login/);
-  assert.match(gatedMlx, /hf download 'mlx-community\/Coder-7B-4bit' --revision 'a1b2c3'/);
+  assert.match(gatedMlx, /uvx hf auth login/);
+  assert.match(gatedMlx, /uvx hf download --revision 'a1b2c3' --local-dir \"\$workdir\" -- 'mlx-community\/Coder-7B-4bit'/);
   assert.match(gatedMlx, /mlx_lm\.generate/);
+});
+
+test("terminates hf options before catalogue-controlled filenames", () => {
+  const hostile = { ...gguf, gated: true, revision: "9f4d7c1", filename: "--exclude=*.gguf" };
+  const command = buildGuidance(hostile, ["llama.cpp"])[0].command;
+  assert.match(command, /hf download --revision '9f4d7c1' --local-dir \"\$workdir\" -- 'org\/Coder-7B-GGUF' '--exclude=\*\.gguf'/);
+  assert.equal(spawnSync("sh", ["-n", "-c", command]).status, 0);
 });
 
 test("ignores parameter metadata that is implausible for the artifact size", () => {
@@ -216,7 +232,7 @@ test("keeps non-gated runtime guidance unchanged", () => {
 });
 test("warns about near disk and memory limits without changing eligibility", () => {
   const diskNearLimit = rankArtifacts([{ ...gguf, sizeBytes: 9_000_000_000, sizeGb: 9 }], { ...mac, runtime: "ollama", diskGb: 23.5, memoryGb: 16 })[0];
-  assert.ok(diskNearLimit.notes.some((note) => note.startsWith("Near disk limit")));
+  assert.ok(diskNearLimit.notes.some((note) => note === "Near disk limit: less than 25% reserve-adjusted disk headroom remains beyond the download/import estimate."));
   const memoryNearLimit = rankArtifacts([{ ...gguf, sizeBytes: 12_000_000_000, sizeGb: 12, paramsB: undefined }], { ...mac, runtime: "llamaCpp", diskGb: 20, memoryGb: 16 })[0];
   assert.ok(memoryNearLimit, "an artifact below the existing memory threshold remains eligible");
   assert.ok(memoryNearLimit.notes.some((note) => note.startsWith("Near memory limit")));
@@ -305,7 +321,7 @@ test("orders equal-score artifacts by stable identity regardless of input order"
   assert.deepEqual(rankArtifacts([alpha, beta], { ...mac, workload: "balanced" }, now).map((item) => item.id), [alpha.id, beta.id]);
 });
 test("labels IQ and full-precision GGUF variants", () => {
-  const artifacts = normalizeModels([{ id: "org/Precision-GGUF", siblings: [{ rfilename: "model.BF16.gguf", size: 9_000_000_000 }, { rfilename: "model.IQ3_XS.gguf", size: 3_000_000_000 }, { rfilename: "model.Q2_K.gguf", size: 2_000_000_000 }] }], "gguf");
+  const artifacts = normalizeModels([{ id: "org/Precision-GGUF", pipeline_tag: "text-generation", siblings: [{ rfilename: "model.BF16.gguf", size: 9_000_000_000 }, { rfilename: "model.IQ3_XS.gguf", size: 3_000_000_000 }, { rfilename: "model.Q2_K.gguf", size: 2_000_000_000 }] }], "gguf");
   assert.deepEqual(artifacts.map((artifact) => artifact.quantization), ["Q2_K", "IQ3_XS", "BF16"]);
 });
 test("retains only counts for invalid or unsupported catalogue candidates", () => {
@@ -372,17 +388,26 @@ test("failed background refreshes stay stale and respect retry backoff", async (
   assert.equal(staleCalls, 2);
 });
 test("stale refreshes use the supplied scheduler so hosts can keep work alive after response", async () => {
-  let scheduled = 0;
   let calls = 0;
+  let release!: (catalogue: { items: Artifact[]; refreshedAt: string }) => void;
+  const scheduled: (() => Promise<void>)[] = [];
   const now = Date.parse("2026-08-02T00:00:00Z");
   const oldCatalogue = { items: [gguf], refreshedAt: "2026-08-01T00:00:00Z" };
   const freshCatalogue = { items: [{ ...gguf, id: "org/Scheduled-GGUF/model.gguf" }], refreshedAt: "2026-08-02T00:00:00Z" };
-  const cache = new CatalogueCache(async () => { calls += 1; return freshCatalogue; }, 1, () => now, 60_000, (task) => { scheduled += 1; task(); });
+  const cache = new CatalogueCache(async () => { calls += 1; return new Promise((resolve) => { release = resolve; }); }, 1, () => now, 60_000, (task) => { scheduled.push(task); });
   (cache as unknown as { state: typeof oldCatalogue }).state = oldCatalogue;
-  assert.equal((await cache.get()).stale, true);
+  const results = await Promise.all([cache.get(), cache.get(), cache.get()]);
+  assert.ok(results.every((result) => result.stale));
+  assert.equal(scheduled.length, 1, "delayed hosts receive only one scheduled refresh");
+  assert.equal(calls, 0, "refresh waits for the host scheduler");
+  let taskSettled = false;
+  const task = scheduled[0]().then(() => { taskSettled = true; });
   await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.equal(scheduled, 1);
   assert.equal(calls, 1);
+  assert.equal(taskSettled, false, "the scheduled task remains pending with its refresh");
+  release(freshCatalogue);
+  await task;
+  assert.equal(taskSettled, true, "the host can keep the refresh alive until completion");
   assert.equal((await cache.get()).catalogue, freshCatalogue);
 });
 test("resolved stale background refreshes also respect retry backoff", async () => {

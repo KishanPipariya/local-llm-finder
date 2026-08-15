@@ -3,8 +3,8 @@ import test from "node:test";
 import { getCatalogue, interleaveUnique, mapWithConcurrency, normalizationExclusions, normalizeHubModel, normalizeModels, parseHubModelList, retrieveCatalogue } from "../lib/catalogue";
 import { fetchJson, MAX_RESPONSE_BYTES } from "../lib/catalogue-request";
 
-const listedModel = { id: "org/Model-GGUF", siblings: [{ rfilename: "model.Q4_K_M.gguf", size: 4_000_000_000 }] };
-const listedMlxModel = { id: "mlx-community/Model", siblings: [{ rfilename: "weights.safetensors", size: 4_000_000_000 }, { rfilename: "config.json", size: 1_000 }, { rfilename: "tokenizer.json", size: 1_000 }] };
+const listedModel = { id: "org/Model-GGUF", pipeline_tag: "text-generation", siblings: [{ rfilename: "model.Q4_K_M.gguf", size: 4_000_000_000 }] };
+const listedMlxModel = { id: "mlx-community/Model", pipeline_tag: "text-generation", siblings: [{ rfilename: "weights.safetensors", size: 4_000_000_000 }, { rfilename: "config.json", size: 1_000 }, { rfilename: "tokenizer.json", size: 1_000 }] };
 test("normalization discards malformed optional Hugging Face metadata", () => {
   const [model] = parseHubModelList([{ ...listedModel, downloads: "many", lastModified: 42, gated: { value: true }, tags: ["code", 42], pipeline_tag: ["text-generation"], gguf: { total: "large", chat_template: 4, context_length: "large" }, safetensors: { total: "large", parameters: { BF16: "large" } }, config: { max_position_embeddings: "large" }, cardData: { license: 3, params: {}, base_model: ["base/model"] }, siblings: [{ rfilename: "model.Q4_K_M.gguf", size: "large" }, listedModel.siblings[0], { rfilename: 42, size: 5 }] }]);
   assert.deepEqual(model.tags, ["code"]);
@@ -35,7 +35,7 @@ test("normalization rejects repositories with excessive metadata cardinality", (
 });
 
 test("normalizes numeric parameter metadata into billions", () => {
-  const raw = { id: "org/Typed-GGUF", siblings: [{ rfilename: "model.Q4.gguf", size: 1_000_000_000 }] };
+  const raw = { id: "org/Typed-GGUF", pipeline_tag: "text-generation", siblings: [{ rfilename: "model.Q4.gguf", size: 1_000_000_000 }] };
   assert.equal(normalizeModels([{ ...raw, cardData: { params: 7_000_000_000 } }], "gguf")[0].paramsB, 7);
   assert.equal(normalizeModels([{ ...raw, cardData: { params: 7 } }], "gguf")[0].paramsB, 7);
 });
@@ -57,6 +57,7 @@ test("normalizes standard Hugging Face GGUF metadata", () => {
 test("falls back to standard parameter metadata when a custom card value is implausible", () => {
   const [artifact] = normalizeModels([{
     id: "org/Qwen-7B-GGUF",
+    pipeline_tag: "text-generation",
     gguf: { total: 7_000_000_000 },
     cardData: { params: "999B" },
     siblings: [{ rfilename: "qwen.Q4_K_M.gguf", size: 4_000_000_000 }],
@@ -76,6 +77,7 @@ test("normalizes standard safetensors parameter metadata for MLX repositories", 
 test("GGUF exclusion counts track each invalid file in a mixed-validity repository", () => {
   const model = {
     id: "org/Mixed-GGUF",
+    pipeline_tag: "text-generation",
     siblings: [
       { rfilename: "model.Q4_K_M.gguf", size: 4_000_000_000 },
       { rfilename: "model.Q2_K.gguf", size: 99_999_999 },
@@ -90,6 +92,7 @@ test("GGUF exclusion counts track each invalid file in a mixed-validity reposito
 test("MLX exclusion counts remain at repository snapshot level", () => {
   const model = {
     id: "mlx-community/Mixed-MLX",
+    pipeline_tag: "text-generation",
     siblings: [
       { rfilename: "weights.safetensors", size: 4_000_000_000 },
       { rfilename: "config.json" },
@@ -145,6 +148,22 @@ test("catalogue excludes non-chat tasks and non-standalone GGUF files", () => {
   const noTaskSignal = { id: "org/NoTaskSignal", siblings: [{ rfilename: "weights.gguf", size: 4_000_000_000 }] };
   assert.deepEqual(normalizeModels([noTaskSignal], "gguf"), [], "metadata-poor artifacts are not admitted without a text-model signal");
   assert.deepEqual(normalizationExclusions([noTaskSignal], "gguf"), { unsupportedArtifact: 1 });
+
+  const formatOnly = { id: "org/Vision-GGUF", siblings: [{ rfilename: "vision.gguf", size: 4_000_000_000 }] };
+  const authorOnly = { id: "mlx-community/ImageGenerator", siblings: [{ rfilename: "weights.safetensors", size: 4_000_000_000 }] };
+  assert.deepEqual(normalizeModels([formatOnly], "gguf"), [], "a format name is not task evidence");
+  assert.deepEqual(normalizeModels([authorOnly], "mlx"), [], "an organization name is not task evidence");
+
+  const mixedUnsupported = { id: "org/NoTaskSignal", siblings: [{ rfilename: "valid.gguf", size: 4_000_000_000 }, { rfilename: "tiny.gguf", size: 1 }] };
+  assert.deepEqual(normalizeModels([mixedUnsupported], "gguf"), []);
+  assert.deepEqual(normalizationExclusions([mixedUnsupported], "gguf"), { unsupportedArtifact: 1, invalidSize: 1 });
+});
+
+test("GGUF normalization caps repository variants before ranking", () => {
+  const siblings = Array.from({ length: 100 }, (_, index) => ({ rfilename: `model-${String(index).padStart(3, "0")}.Q4_K_M.gguf`, size: 100_000_000 + index }));
+  const artifacts = normalizeModels([{ id: "org/Bulk-GGUF", pipeline_tag: "text-generation", siblings }], "gguf");
+  assert.equal(artifacts.length, 64);
+  assert.deepEqual(artifacts.map((artifact) => artifact.filename), siblings.slice(0, 64).map((file) => file.rfilename));
 });
 
 function upstream(options: { unavailableModel?: string } = {}) {
@@ -199,6 +218,22 @@ test("catalogue refresh rejects a materially incomplete metadata sample", async 
     return Response.json(listedMlxModel);
   };
   await assert.rejects(retrieveCatalogue(incomplete as typeof fetch), /materially incomplete/);
+});
+
+test("catalogue refresh requires usable artifacts from both formats", async () => {
+  const emptyGguf = { id: "org/Empty-GGUF", pipeline_tag: "text-generation", siblings: [{ rfilename: "README.md", size: 1_000 }] };
+  const noUsableGguf = async (url: string) => {
+    if (url.includes("?full=true")) return Response.json(url.includes("author=mlx-community") ? [listedMlxModel] : [emptyGguf]);
+    return Response.json(url.includes("mlx-community") ? listedMlxModel : emptyGguf);
+  };
+  await assert.rejects(retrieveCatalogue(noUsableGguf as typeof fetch), /GGUF catalogue returned no usable artifacts/);
+
+  const emptyMlx = { id: "mlx-community/Empty", pipeline_tag: "text-generation", siblings: [{ rfilename: "README.md", size: 1_000 }] };
+  const noUsableMlx = async (url: string) => {
+    if (url.includes("?full=true")) return Response.json(url.includes("author=mlx-community") ? [emptyMlx] : [listedModel]);
+    return Response.json(url.includes("mlx-community") ? emptyMlx : listedModel);
+  };
+  await assert.rejects(retrieveCatalogue(noUsableMlx as typeof fetch), /MLX catalogue returned no usable artifacts/);
 });
 
 test("catalogue refresh fails atomically when its deadline aborts metadata retrieval", async () => {

@@ -158,30 +158,38 @@ artifacts.
   imatrix files are excluded because the exact-file guidance cannot run them by
   themselves. Explicit unknown or incompatible pipeline tasks are excluded;
   missing task metadata is accepted only when the model has a text/chat/coding
-  or known model-family/format signal in its ID, tags, or GGUF chat-template metadata; otherwise it is counted
-  as an unsupported artifact. It supports Ollama, LM Studio, and llama.cpp. Each
-  runtime recipe downloads into a fresh temporary directory (`curl` for an
-  unpinned ungated GGUF file, `hf` for pinned or gated files and MLX snapshots), uses an
-  artifact-specific local model name, and shell-quotes catalogue-controlled
-  values; unsafe control-character and traversal paths are discarded before
-  guidance is built; arbitrary Hugging Face files never use `ollama pull` or a catalogue
-  search command. `sourceUrl` remains the exact GGUF download or MLX
+  signal in its ID, tags, card/base-model metadata, or GGUF chat template.
+  Format names, the publishing organization, and model-family names are not task
+  evidence by themselves; otherwise the repository is counted as an unsupported
+  artifact. At most 64 valid GGUF files are retained from one repository so an
+  unusually large upstream repository cannot expand ranking work without bound.
+  It supports Ollama, LM Studio, and llama.cpp. Each
+  runtime recipe downloads into a fresh temporary directory (`curl` for every
+  public GGUF file, `hf` for gated GGUF files, and `uvx hf` for MLX snapshots),
+  uses an artifact-specific local model name, and shell-quotes catalogue-controlled
+  values. Hugging Face CLI options precede an explicit `--` terminator so even
+  a leading-hyphen upstream filename remains a positional filename rather than
+  an injected option; unsafe control-character and traversal paths are discarded
+  before guidance is built. Arbitrary Hugging Face files never use `ollama pull`
+  or a catalogue search command. `sourceUrl` remains the exact GGUF download or MLX
   repository URL used by installation guidance, while optional `viewUrl`
   points to the human-facing Hugging Face file or repository viewer. Model
   context metadata is normalized to
   `maxContextTokens` when available.
-- MLX: require at least one positively sized `.safetensors` weight file and a
-  supported text-generation pipeline, then sum every file in the repository
-  snapshot—not only recognised runtime assets.
+- MLX: require at least one positively sized `.safetensors` weight file and an
+  explicit supported pipeline or text/chat/coding task signal, then sum every
+  file in the repository snapshot—not only recognised runtime assets.
   Any unknown, non-integer, or non-positive included file size excludes the
   artifact, and the aggregate must meet the 100 MB minimum. This keeps snapshot
-  download estimates conservative. Its guidance uses `uvx --from mlx-lm
-  mlx_lm.generate`. It supports MLX.
+  download estimates conservative. Its guidance uses `uvx hf` for the snapshot
+  and `uvx --from mlx-lm mlx_lm.generate`, requiring `uv`/`uvx`. It supports MLX.
 - Disk fit is operationally strict: normal downloads and temporary working files
-  use a 1.25× artifact estimate, while GGUF results that may use Ollama use 2.5×
+  use a 1.25× artifact estimate, while GGUF results that retain Ollama use 2.5×
   to account for the downloaded file and temporary import copy while preserving
-  20% free disk. Recommendations can still warn when operational headroom is only
-  20–25%, and each card states the assumption used.
+  20% free disk. A runtime-neutral request evaluates this requirement per runtime:
+  Ollama can be removed while LM Studio and llama.cpp remain eligible. Recommendations
+  can still warn when less than 25% reserve-adjusted disk headroom remains beyond
+  the operational estimate, and each card states the assumption used.
 - Memory estimate adds conservative file-mapping, runtime, and context overhead.
   Small (4K tokens) is for short chats, Normal (16K tokens) is the default for
   typical chat/coding, and Long (32K tokens) reserves more headroom for large
@@ -196,10 +204,11 @@ artifacts.
   32K preset are excluded as `insufficientContext`; unknown limits remain
   eligible but are labeled as memory-only estimates. Fit estimates are not
   run-success guarantees.
-- Gated models remain eligible, but carry a sign-in and licence-acceptance note.
-  Their guidance starts with `hf auth login`, downloads the exact artifact or
-  repository snapshot at the immutable Hugging Face revision when available,
-  then runs the runtime-specific local import command.
+- Gated models remain eligible, but carry the appropriate download-tool
+  prerequisite, sign-in, and licence-acceptance note. Gated GGUF guidance starts
+  with `hf auth login`; gated MLX guidance uses `uvx hf auth login`. Both download
+  the exact artifact or repository snapshot at the immutable Hugging Face revision
+  when available, then run the runtime-specific local import command.
 - When Hugging Face supplies a repository revision, it is retained in normalized
   artifact metadata. Exact GGUF file links and MLX repository links use that
   revision rather than a moving branch; links fall back to `main` or the
@@ -219,8 +228,10 @@ normalized family key. Hugging Face `pipeline_tag` is retained alongside titles
 and tags: generic `text-generation` and `text2text-generation` identify compatible
 generation tasks but do not by themselves imply chat suitability; instruct/chat
 tags, conversational tasks, and GGUF chat-template metadata provide chat signals.
-Missing task metadata stays eligible and neutral; explicit unknown or incompatible
-pipeline tasks are excluded conservatively. Numeric parameter metadata is
+Missing pipeline metadata stays eligible and neutral only when explicit
+text/chat/coding evidence is present; format, author, and model-family names are
+not sufficient. Explicit unknown or incompatible pipeline tasks are excluded
+conservatively. Numeric parameter metadata is
 normalized to billions from standard GGUF or safetensors totals, model-card
 values, base-model names, or repository names when plausible. Workload metadata is presented only as
 coding-oriented, general chat, mixed, or unknown—not as a capability benchmark. A bounded
@@ -232,7 +243,9 @@ explicit tie-breakers, so an upstream list's order cannot change a shortlist.
 
 The recommendation result also includes an `exclusions` count by reason. Counts
 include candidates rejected during Hugging Face normalization, but never expose
-the rejected artifact metadata. GGUF invalid-size exclusions are counted per
+the rejected artifact metadata. The deterministic per-repository GGUF sampling
+cap is a catalogue bound rather than an incompatibility and is not included in
+exclusion counts. GGUF invalid-size exclusions are counted per
 file because each file is a separately recommendable artifact; MLX invalid-size
 exclusions are counted once per repository snapshot because MLX downloads the
 complete repository. The
@@ -274,7 +287,9 @@ replacing the last valid catalogue with a severely truncated one. Each request h
 timeout, while a complete refresh has a 30-second deadline that aborts all
 outstanding work. A refresh-controller abort fails the complete refresh
 atomically so the last valid local catalogue can be served as stale. An empty
-usable catalogue also fails the full refresh.
+usable catalogue for either GGUF or MLX also fails the full refresh, preventing a
+successful partial feed from replacing a catalogue that supports all runtimes.
+Normalization retains at most 64 deterministic GGUF variants per repository.
 
 Next.js Cache Components' `use cache` directive wraps the complete production
 refresh with a six-hour revalidation interval. `CatalogueCache` holds the last
@@ -282,10 +297,12 @@ valid normalized catalogue in each process for six hours. A cold local cache
 blocks only for the shared refresh budget; without a successful catalogue, the
 error is propagated. Once a catalogue has expired, callers immediately receive
 the prior catalogue with `stale: true` while one shared background refresh runs.
+A scheduled-refresh marker coalesces stale requests before the deferred callback
+starts, as well as while the refresh promise itself is in flight.
 A successful background refresh replaces the cache and clears the retry backoff.
-A stale response schedules that refresh through Next.js `after()` so supported
-serverless hosts can finish the work after sending the response instead of
-discarding an unawaited promise.
+A stale response schedules that refresh through Next.js `after()` and returns
+the refresh promise from the callback, so supported serverless hosts keep the
+invocation alive until the work settles after sending the response.
 A failed refresh—or a framework-cache call that resolves only to an already
 stale catalogue—is consumed internally, keeps the prior catalogue stale, and
 waits five minutes before the next refresh attempt, avoiding repeated upstream

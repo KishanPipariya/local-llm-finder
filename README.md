@@ -53,10 +53,11 @@ A successful response returns the existing recommendation result object, includi
 
 Hugging Face GGUF files use import-based Ollama guidance; the finder never
 emits `ollama pull` for an arbitrary Hugging Face file. Human-facing source links
-open the Hugging Face viewer while installation guidance retains the exact
-artifact or repository URL. Gated artifacts keep
-their licence warning and use `hf auth login` plus an exact-revision download
-before the runtime-specific import command.
+open the Hugging Face viewer while public GGUF installation guidance downloads
+the exact revision URL with macOS's built-in `curl`. Gated GGUF artifacts keep
+their licence and `hf` CLI prerequisite warning, then use `hf auth login` plus
+an exact-revision download. MLX guidance uses `uvx hf` and `mlx-lm`, so it
+requires `uv`/`uvx` rather than a separately installed `hf` command.
 
 ## Catalogue refresh and fallback
 
@@ -75,8 +76,13 @@ repository's `blobs=true` metadata before normalizing it. There are no
 non-Hugging-Face catalogue requests. MLX sizes represent the complete snapshot
 download and are rejected when any repository file has an unknown size; imports
 may also need temporary free disk space beyond the displayed download size. GGUF
-results that may use Ollama reserve a larger operational disk estimate for the
-download and temporary import copy.
+results that can fit Ollama reserve a larger operational disk estimate for the
+download and temporary import copy. With the runtime-neutral option, runtimes
+whose workflow does not fit are removed individually instead of excluding an
+artifact that remains usable through another GGUF runtime. Missing task metadata
+requires explicit text, chat, or coding evidence rather than a repository format,
+author, or model family name. A refresh must retain at least one usable GGUF and
+MLX artifact, and each repository contributes at most 64 deterministic GGUF variants.
 
 ## Run locally
 

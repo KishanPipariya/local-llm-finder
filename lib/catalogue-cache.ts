@@ -2,11 +2,12 @@ import type { Artifact, ExclusionSummary } from "./recommendations";
 
 export type Catalogue = { items: Artifact[]; refreshedAt: string; exclusions?: Partial<ExclusionSummary> };
 export type CatalogueState = Catalogue | undefined;
-export type RefreshScheduler = (task: () => void) => void;
+export type RefreshScheduler = (task: () => Promise<void>) => void;
 
 export class CatalogueCache {
   private state: CatalogueState;
   private refreshInFlight: Promise<Catalogue> | undefined;
+  private refreshScheduled = false;
   private retryAfter = 0;
 
   constructor(
@@ -14,14 +15,14 @@ export class CatalogueCache {
     private readonly maxAge = 6 * 60 * 60 * 1000,
     private readonly clock = () => Date.now(),
     private readonly retryDelay = 5 * 60 * 1000,
-    private readonly schedule: RefreshScheduler = (task) => task(),
+    private readonly schedule: RefreshScheduler = (task) => { void task(); },
   ) {}
 
   async get(): Promise<{ catalogue: Catalogue; stale: boolean }> {
     const now = this.clock();
     if (this.state && isFresh(this.state, now, this.maxAge)) return { catalogue: this.state, stale: false };
     if (this.state) {
-      if (now >= this.retryAfter) this.schedule(() => { void this.startRefresh().catch(() => undefined); });
+      if (now >= this.retryAfter && !this.refreshInFlight && !this.refreshScheduled) this.scheduleRefresh();
       return { catalogue: this.state, stale: true };
     }
 
@@ -29,6 +30,21 @@ export class CatalogueCache {
 
     const catalogue = await this.startRefresh();
     return { catalogue, stale: !isFresh(catalogue, this.clock(), this.maxAge) };
+  }
+
+  private scheduleRefresh() {
+    this.refreshScheduled = true;
+    try {
+      this.schedule(async () => {
+        this.refreshScheduled = false;
+        const now = this.clock();
+        if (!this.state || isFresh(this.state, now, this.maxAge) || now < this.retryAfter || this.refreshInFlight) return;
+        await this.startRefresh().then(() => undefined, () => undefined);
+      });
+    } catch (error) {
+      this.refreshScheduled = false;
+      throw error;
+    }
   }
 
   private startRefresh(): Promise<Catalogue> {

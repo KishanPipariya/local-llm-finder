@@ -7,7 +7,7 @@ import { chipProfiles, type Chip, type ConfigField, type ConfigFieldErrors, type
 type FormConfig = { chip?: string; memoryGb?: number; diskGb?: number; workload?: string; runtime?: string; context?: string };
 const fieldTargets: Record<ConfigField, string> = { chip: "chip", memoryGb: "memoryGb", diskGb: "diskGb", workload: "workload-chat", runtime: "runtime-ollama", context: "context-small" };
 const contextConsequences = { small: "Good for a short chat or one small file.", normal: "Good for chat and a few files.", long: "Reserves more memory for large repositories and documents." } as const;
-const runtimeDescriptions = { ollama: "The simplest starting point: install one app and run a short command.", lmStudio: "A desktop app with a visual model browser and chat window.", mlx: "Apple-silicon-native tools for people comfortable working in a terminal.", llamaCpp: "A lightweight command-line runtime with flexible local controls.", any: "Keep GGUF and MLX options in the same shortlist without filtering to one app." } as const;
+const runtimeDescriptions = { ollama: "The simplest starting point: install one app and run a short command.", lmStudio: "A desktop app with a visual model browser and chat window.", mlx: "Apple-silicon-native terminal tools that require uv and uvx.", llamaCpp: "A lightweight command-line runtime with flexible local controls.", any: "Keep GGUF and MLX options in the same shortlist without filtering to one app." } as const;
 
 function validInitialMemory(chip: Chip, memoryGb: number) {
   const options = chipProfiles[chip].memoryOptionsGb as readonly number[];
