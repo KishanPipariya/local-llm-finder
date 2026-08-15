@@ -190,6 +190,7 @@ export function parseHubModelList(value: unknown): HubModel[] {
   if (!Array.isArray(value)) throw new Error("Hugging Face returned an invalid model list");
   const models = value.map(normalizeHubModel).filter((model): model is HubModel => model !== undefined);
   if (!models.length) throw new Error("Hugging Face returned an invalid model list");
+  if (models.length * 2 < value.length) throw new Error("Hugging Face model list was materially incomplete after normalization");
   return models;
 }
 

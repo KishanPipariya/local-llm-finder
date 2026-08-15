@@ -42,7 +42,9 @@ closest valid amount (ties go lower), then announces the adjustment. The live
 storage, use, context, and runtime as choices change. Without JavaScript, the
 same GET form remains usable and server validation provides field-specific
 recovery for impossible shared URLs. Validation summaries link directly to the
-invalid control and focus it when activated.
+invalid control and focus it when activated. In the enhanced form, changing an
+invalid field clears its stale server error immediately; correcting hardware also
+restores the selected chip's supported memory choices.
 Once any configuration query parameter is present, the four
 hardware/workload fields are required; runtime and context are optional for
 backwards-compatible shared URLs. Incomplete direct GET requests receive the same
@@ -289,6 +291,9 @@ outstanding work. A refresh-controller abort fails the complete refresh
 atomically so the last valid local catalogue can be served as stale. An empty
 usable catalogue for either GGUF or MLX also fails the full refresh, preventing a
 successful partial feed from replacing a catalogue that supports all runtimes.
+List normalization also fails a feed when more than half of its raw entries are
+malformed, so normalization cannot hide a materially truncated upstream sample
+from the later completeness checks.
 Normalization retains at most 64 deterministic GGUF variants per repository.
 
 Next.js Cache Components' `use cache` directive wraps the complete production

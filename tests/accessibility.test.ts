@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { createServer } from "node:net";
 import { pathToFileURL } from "node:url";
 import AxeBuilder from "@axe-core/playwright";
-import { chromium, type BrowserContext, type Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { chipProfiles, validateConfig } from "../lib/hardware.js";
 
 async function allocatePort() {
@@ -81,10 +81,11 @@ async function assertPhoneLayout(page: Page, state: string) {
 
 const fetchMockImport = pathToFileURL("tests/browser-catalogue-fetch-mock.mjs").href;
 const server = spawn(process.execPath, ["--import", fetchMockImport, "node_modules/next/dist/bin/next", "start", "--port", String(port)], { stdio: "ignore", env: process.env });
-const browser = await chromium.launch();
-const context = await browser.newContext();
+let browser: Browser | undefined;
 
 try {
+  browser = await chromium.launch();
+  const context = await browser.newContext();
   const initial = await waitForPage(context);
   await assertNoAxeViolations(initial, "initial finder");
   assert.equal(await initial.getByText("Ollama is the recommended default.", { exact: false }).count(), 1, "runtime helper gives beginners a recommended starting point");
@@ -202,6 +203,10 @@ try {
   assert.match(await invalid.locator("#memoryGb option:checked").textContent() ?? "", /submitted value is unsupported/i);
   await invalid.getByRole("link", { name: "Choose a memory configuration supported by that chip." }).click();
   assert.equal(await invalid.locator(":focus").getAttribute("id"), "memoryGb", "validation recovery links focus their invalid control");
+  await invalid.locator("#memoryGb").selectOption("24");
+  assert.equal(await invalid.locator("#memoryGb").getAttribute("aria-invalid"), "false", "correcting memory clears its stale invalid state");
+  assert.equal(await invalid.locator("#memory-error").count(), 0, "correcting memory removes its stale field error");
+  assert.deepEqual(await invalid.locator("#memoryGb option").evaluateAll((options) => options.map((option) => option.getAttribute("value"))), chipProfiles.m4Pro.memoryOptionsGb.map(String), "correcting memory restores chip-specific options");
   await assertPhoneLayout(invalid, "320px invalid finder");
 
   const narrowResults = await narrowContext.newPage();
@@ -272,7 +277,7 @@ try {
   await narrowContext.close();
   await context.close();
 } finally {
-  await browser.close();
+  await browser?.close();
   if (server.exitCode === null) {
     server.kill("SIGTERM");
     await once(server, "exit");

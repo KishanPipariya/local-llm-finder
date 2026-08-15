@@ -34,6 +34,13 @@ test("normalization rejects repositories with excessive metadata cardinality", (
   assert.equal(normalizeHubModel({ id: "org/Too-Many-Files", siblings }), undefined);
 });
 
+test("catalogue list parsing rejects a materially malformed upstream sample", () => {
+  assert.throws(
+    () => parseHubModelList([listedModel, {}, { id: "unsafe id" }, null]),
+    /materially incomplete/,
+  );
+});
+
 test("normalizes numeric parameter metadata into billions", () => {
   const raw = { id: "org/Typed-GGUF", pipeline_tag: "text-generation", siblings: [{ rfilename: "model.Q4.gguf", size: 1_000_000_000 }] };
   assert.equal(normalizeModels([{ ...raw, cardData: { params: 7_000_000_000 } }], "gguf")[0].paramsB, 7);

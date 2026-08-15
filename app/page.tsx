@@ -29,7 +29,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Fin
     <a className="skip-link" href="#finder">Skip to the model finder</a>
     <Hero />
     <PresetLinks />
-    <FinderForm config={validation.valid ? validation.data : candidate} submitted={submitted} errors={validation.valid ? [] : validation.errors} fieldErrors={validation.valid ? {} : validation.fieldErrors} catalogueError={catalogueError} />
+    <FinderForm config={validation.valid ? validation.data : candidate} submitted={submitted} fieldErrors={validation.valid ? {} : validation.fieldErrors} catalogueError={catalogueError} />
     {result && selectedConfig && <Results result={result} config={selectedConfig} />}
     <SiteFooter />
   </main>;
