@@ -41,9 +41,12 @@ export class CatalogueCache {
         if (!this.state || isFresh(this.state, now, this.maxAge) || now < this.retryAfter || this.refreshInFlight) return;
         await this.startRefresh().then(() => undefined, () => undefined);
       });
-    } catch (error) {
+    } catch {
       this.refreshScheduled = false;
-      throw error;
+      // Scheduling is an operational part of refreshing. Preserve the stale
+      // catalogue when the host cannot register background work, and apply the
+      // same backoff used for a failed refresh to avoid retrying every request.
+      this.retryAfter = this.clock() + this.retryDelay;
     }
   }
 

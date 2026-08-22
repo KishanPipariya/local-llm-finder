@@ -395,6 +395,23 @@ test("failed background refreshes stay stale and respect retry backoff", async (
   assert.equal((await stale.get()).stale, true);
   assert.equal(staleCalls, 2);
 });
+test("scheduler failures preserve stale catalogue data and respect retry backoff", async () => {
+  let scheduleCalls = 0;
+  let now = Date.parse("2026-08-02T00:00:00Z");
+  const oldCatalogue = { items: [gguf], refreshedAt: "2026-08-01T00:00:00Z" };
+  const cache = new CatalogueCache(async () => { throw new Error("refresh must not start"); }, 1, () => now, 60_000, () => {
+    scheduleCalls += 1;
+    throw new Error("scheduler unavailable");
+  });
+  (cache as unknown as { state: typeof oldCatalogue }).state = oldCatalogue;
+
+  assert.deepEqual(await cache.get(), { catalogue: oldCatalogue, stale: true });
+  assert.deepEqual(await cache.get(), { catalogue: oldCatalogue, stale: true });
+  assert.equal(scheduleCalls, 1, "scheduler failure does not retry before backoff expires");
+  now += 60_000;
+  assert.deepEqual(await cache.get(), { catalogue: oldCatalogue, stale: true });
+  assert.equal(scheduleCalls, 2);
+});
 test("stale refreshes use the supplied scheduler so hosts can keep work alive after response", async () => {
   let calls = 0;
   let release!: (catalogue: { items: Artifact[]; refreshedAt: string }) => void;

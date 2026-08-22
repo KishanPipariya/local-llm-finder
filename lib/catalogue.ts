@@ -51,7 +51,7 @@ function params(value: unknown): number | undefined {
 const titleOf = (id: string) => id.split("/").at(-1)?.replace(/-(GGUF|MLX)$/i, "") ?? id;
 const validSize = (size: unknown): size is number => typeof size === "number" && Number.isSafeInteger(size) && size >= MIN_ARTIFACT_BYTES;
 const knownFileSize = (size: unknown): size is number => typeof size === "number" && Number.isSafeInteger(size) && size > 0;
-const isMlxWeightFile = (file: HubFile) => /(?:^|\/)[^/]+\.safetensors$/i.test(file.rfilename) && knownFileSize(file.size);
+const isMlxWeightFile = (file: HubFile) => /(?:^|\/)[^/]+\.safetensors$/i.test(file.rfilename);
 const mlxAdapterSignal = /(?:^|[^a-z0-9])(?:adapter|lora|qlora|peft)(?:$|[^a-z0-9])/i;
 const isMlxAdapterRepository = (model: HubModel, files: HubFile[]) => mlxAdapterSignal.test([
   model.id,
@@ -59,7 +59,37 @@ const isMlxAdapterRepository = (model: HubModel, files: HubFile[]) => mlxAdapter
   ...(model.tags ?? []),
   ...files.map((file) => file.rfilename),
 ].filter((value): value is string => typeof value === "string").join(" "));
-const hasRunnableMlxWeights = (model: HubModel, files: HubFile[]) => files.some(isMlxWeightFile) && !isMlxAdapterRepository(model, files);
+const hasMlxConfig = (files: HubFile[]) => files.some((file) => file.rfilename === "config.json");
+const hasMlxTokenizer = (files: HubFile[]) => {
+  const filenames = new Set(files.map((file) => file.rfilename));
+  return ["tokenizer.json", "tokenizer.model", "spiece.model", "sentencepiece.bpe.model"].some((filename) => filenames.has(filename))
+    || (filenames.has("vocab.json") && filenames.has("merges.txt"));
+};
+
+function hasCompleteMlxWeightSet(files: HubFile[]) {
+  const weights = files.filter(isMlxWeightFile);
+  if (!weights.length) return false;
+  const shardGroups = new Map<string, { total: number; indexes: Set<number> }>();
+  for (const file of weights) {
+    const match = file.rfilename.match(/^(.*)-(\d+)-of-(\d+)\.safetensors$/i);
+    if (!match) continue;
+    const index = Number(match[2]);
+    const total = Number(match[3]);
+    if (!Number.isSafeInteger(index) || !Number.isSafeInteger(total) || index < 1 || total < 1 || index > total || total > MAX_FILES_PER_REPOSITORY) return false;
+    const group = shardGroups.get(match[1]);
+    if (group && group.total !== total) return false;
+    const selected = group ?? { total, indexes: new Set<number>() };
+    selected.indexes.add(index);
+    shardGroups.set(match[1], selected);
+  }
+  return [...shardGroups.values()].every((group) => group.indexes.size === group.total);
+}
+
+const hasCompleteMlxSnapshot = (model: HubModel, files: HubFile[]) => !isMlxAdapterRepository(model, files)
+  && hasCompleteMlxWeightSet(files)
+  && hasMlxConfig(files)
+  && hasMlxTokenizer(files);
+const hasValidMlxWeightSizes = (files: HubFile[]) => files.filter(isMlxWeightFile).every((file) => knownFileSize(file.size));
 const supportedPipelineTags = new Set(["text-generation", "text2text-generation", "conversational"]);
 const textModelSignal = /(?:^|[^a-z])(?:instruct|chat|assistant|conversation|conversational|code|coder|coding|programming|text-generation|text-model|language-model|llm)(?:$|[^a-z])/i;
 const isSupportedTask = (model: HubModel) => {
@@ -298,7 +328,7 @@ export function normalizeModels(models: HubModel[], format: Artifact["format"]):
     // not recognised as runtime assets, and reject unknown sizes so disk-fit
     // guidance remains conservative.
     const sizeBytes = format === "gguf" ? undefined : matched.reduce((sum, file) => knownFileSize(file.size) ? sum + file.size : Number.NaN, 0);
-    if (format === "mlx" && (!hasRunnableMlxWeights(model, matched) || !validSize(sizeBytes))) return [];
+    if (format === "mlx" && (!hasCompleteMlxSnapshot(model, matched) || !hasValidMlxWeightSizes(matched) || !validSize(sizeBytes))) return [];
     return selectedFiles.flatMap((selected) => {
       const artifactSize = format === "gguf" ? selected!.size : sizeBytes;
       if (!validSize(artifactSize)) return [];
@@ -351,7 +381,7 @@ export function normalizationExclusions(models: HubModel[], format: Artifact["fo
       // MLX is downloaded as one repository snapshot, so its exclusion stays
       // at repository level. Missing weights are an unsupported artifact;
       // invalid sizes are reserved for an otherwise complete snapshot.
-      if (!hasRunnableMlxWeights(model, matched) || !isSupportedTask(model)) counts.unsupportedArtifact = (counts.unsupportedArtifact ?? 0) + 1;
+      if (!hasCompleteMlxSnapshot(model, matched) || !isSupportedTask(model)) counts.unsupportedArtifact = (counts.unsupportedArtifact ?? 0) + 1;
       else if (!normalizeModels([model], format).length) counts.invalidSize = (counts.invalidSize ?? 0) + 1;
     } else if (!isSupportedTask(model)) counts.unsupportedArtifact = (counts.unsupportedArtifact ?? 0) + 1;
     return counts;

@@ -17,7 +17,7 @@ Browser GET /?chip=…&memoryGb=…&diskGb=…&workload=…&runtime=…&context=
   -> server-rendered FinderForm and Results response, including typed fit explanations and exclusion counts
 
 Browser POST /api/recommendations (same configuration JSON)
-  -> app/api/recommendations/route.ts bounds the JSON body, validates it, and uses the same catalogue-unavailable message
+  -> app/api/recommendations/route.ts limits the JSON body to 32 KiB and five seconds of read time, validates it, and uses the same catalogue-unavailable message
   -> the same recommendation service
   -> the same JSON result (including fit explanations and exclusion counts), 400 validation error, or 503 catalogue error
 ```
@@ -181,9 +181,13 @@ artifacts.
   points to the human-facing Hugging Face file or repository viewer. Model
   context metadata is normalized to
   `maxContextTokens` when available.
-- MLX: require at least one positively sized `.safetensors` weight file and an
-  explicit supported pipeline or text/chat/coding task signal, then sum every
+- MLX: require one complete `.safetensors` weight set, a root `config.json`,
+  self-contained tokenizer data (`tokenizer.json`, a supported tokenizer model,
+  or the `vocab.json`/`merges.txt` pair), and an explicit supported pipeline or
+  text/chat/coding task signal, then sum every
   file in the repository snapshot—not only recognised runtime assets.
+  Every declared checkpoint shard must be present with a valid one-based index;
+  incomplete or internally inconsistent shard groups are unsupported artifacts.
   Adapter-only, LoRA, QLoRA, and PEFT repositories are classified as unsupported
   artifacts even when they contain a `.safetensors` file, because MLX-LM needs a
   complete, self-contained base-model snapshot.
@@ -326,6 +330,9 @@ stale catalogue—is consumed internally, keeps the prior catalogue stale, and
 waits five minutes before the next refresh attempt, avoiding repeated upstream
 calls during an outage. Cold failures also honour the same backoff before
 returning another unavailable response.
+If the host cannot register the `after()` callback, that scheduling failure is
+also consumed, the stale catalogue is returned, and the same five-minute backoff
+prevents every request from immediately retrying registration.
 If a cold or completed refresh yields a catalogue already older than six hours,
 it is returned with `stale: true`; freshness never claims that an old catalogue
 is current. If no valid catalogue has ever been acquired, the error is propagated:
@@ -338,6 +345,11 @@ is current. If no valid catalogue has ever been acquired, the error is propagate
 No application persistence layer, analytics, account service, or client-side
 catalogue request is part of this design. The framework cache is an optimization;
 the process-local cache remains the source of stale-fallback behavior.
+
+The POST adapter reads the native `Request` stream directly. It cancels and
+rejects bodies that exceed 32 KiB, take longer than five seconds to finish, or
+are aborted by the client, then maps them through the existing `400` validation
+response without invoking catalogue retrieval.
 
 ## Development and verification
 

@@ -3,6 +3,7 @@ import test from "node:test";
 import { createPostHandler } from "../app/api/recommendations/route";
 import { parseFinderRequest } from "../lib/request";
 import { validateConfig, type MacConfig } from "../lib/hardware";
+import { handleRecommendationPost } from "../lib/recommendation-request";
 import { mergeExclusions } from "../lib/recommendation-service";
 
 const valid: MacConfig = { chip: "m4", memoryGb: 16, diskGb: 80, workload: "balanced" };
@@ -65,6 +66,15 @@ test("POST bounds request-body reads before validation", async () => {
   const handler = createPostHandler(async () => { called = true; return {}; });
   const response = await handler(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify({ ...valid, padding: "x".repeat(40_000) }) }));
   assert.equal(response.status, 400);
+  assert.equal(called, false);
+});
+
+test("POST bounds request-body read time before validation", async () => {
+  let called = false;
+  const body = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new TextEncoder().encode("{")); } });
+  const request = new Request("http://test/api/recommendations", { method: "POST", body, duplex: "half" } as RequestInit & { duplex: "half" });
+  const result = await handleRecommendationPost(request, async () => { called = true; return {}; }, "unavailable", 5);
+  assert.equal(result.status, 400);
   assert.equal(called, false);
 });
 

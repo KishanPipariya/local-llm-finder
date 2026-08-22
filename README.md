@@ -49,7 +49,7 @@ POST /api/recommendations ┘                                      └───�
 }
 ```
 
-A successful response returns the existing recommendation result object, including `recommendations`, `exclusions`, and `stale`. Exclusions include disk, memory, verified-context, invalid-size, unsupported-format, and unsupported-artifact counts. Invalid configurations return `400` with `errors` and `fieldErrors`; a catalogue outage with no cached result returns `503` with `error`. JSON request bodies are bounded before parsing. The GET-only `runtime=any` choice represents the legacy runtime-neutral preference; the JSON API accepts only concrete runtime names.
+A successful response returns the existing recommendation result object, including `recommendations`, `exclusions`, and `stale`. Exclusions include disk, memory, verified-context, invalid-size, unsupported-format, and unsupported-artifact counts. Invalid configurations return `400` with `errors` and `fieldErrors`; a catalogue outage with no cached result returns `503` with `error`. JSON request bodies are limited to 32 KiB and five seconds of body-read time before parsing. The GET-only `runtime=any` choice represents the legacy runtime-neutral preference; the JSON API accepts only concrete runtime names.
 
 Hugging Face GGUF files use import-based Ollama guidance; the finder never
 emits `ollama pull` for an arbitrary Hugging Face file. Human-facing source links
@@ -70,7 +70,8 @@ The complete server-side catalogue refresh uses Next.js Cache Components with a
 six-hour revalidation interval, so source data can be up to six hours old. Each process
 also keeps its own six-hour `CatalogueCache`: it coalesces requests, serves the
 last valid result as stale during a refresh or outage, marks an already-expired
-refresh result as stale, and waits five minutes before retrying a failed refresh.
+refresh result as stale, and waits five minutes before retrying a failed refresh
+or failed background-work registration.
 If neither cache has a valid catalogue, the GET flow shows its temporary error
 and the API returns `503`.
 
@@ -82,7 +83,8 @@ non-Hugging-Face catalogue requests. MLX sizes represent the complete snapshot
 download and are rejected when any repository file has an unknown size; imports
 may also need temporary free disk space beyond the displayed download size.
 Adapter-only LoRA, QLoRA, and PEFT repositories are not treated as runnable MLX
-base models. Normalized metadata has per-field, per-repository, and whole-refresh
+base models. MLX snapshots must also contain every declared weight shard, a root
+model config, and self-contained tokenizer assets. Normalized metadata has per-field, per-repository, and whole-refresh
 size limits in addition to the upstream response-size bound. GGUF
 results that can fit Ollama reserve a larger operational disk estimate for the
 download and temporary import copy. With the runtime-neutral option, runtimes

@@ -81,7 +81,7 @@ test("normalizes standard safetensors parameter metadata for MLX repositories", 
   const [artifact] = normalizeModels([{
     id: "mlx-community/Qwen2.5-7B-Instruct-4bit",
     safetensors: { parameters: { BF16: 7_000_000_000 } },
-    siblings: [{ rfilename: "weights.safetensors", size: 4_000_000_000 }, { rfilename: "config.json", size: 1_000 }],
+    siblings: [{ rfilename: "weights.safetensors", size: 4_000_000_000 }, { rfilename: "config.json", size: 1_000 }, { rfilename: "tokenizer.json", size: 1_000 }],
   }], "mlx");
   assert.equal(artifact.paramsB, 7);
 });
@@ -138,6 +138,38 @@ test("MLX adapter-only repositories are not treated as runnable model snapshots"
 
   const adapterWithGenericWeightName = { ...adapter, id: "mlx-community/Adapter-Example", siblings: [{ rfilename: "weights.safetensors", size: 200_000_000 }] };
   assert.deepEqual(normalizeModels([adapterWithGenericWeightName], "mlx"), [], "adapter metadata prevents a generic weight filename from bypassing the completeness check");
+});
+
+test("MLX repositories require complete weight shards and self-contained runtime assets", () => {
+  const files = [
+    { rfilename: "config.json", size: 1_000 },
+    { rfilename: "tokenizer.json", size: 1_000 },
+  ];
+  const incomplete = {
+    id: "mlx-community/Incomplete-Shards",
+    pipeline_tag: "text-generation",
+    siblings: [{ rfilename: "model-00001-of-00002.safetensors", size: 2_000_000_000 }, ...files],
+  };
+  assert.deepEqual(normalizeModels([incomplete], "mlx"), []);
+  assert.deepEqual(normalizationExclusions([incomplete], "mlx"), { unsupportedArtifact: 1 });
+
+  const complete = {
+    ...incomplete,
+    id: "mlx-community/Complete-Shards",
+    siblings: [
+      { rfilename: "model-00002-of-00002.safetensors", size: 2_000_000_000 },
+      { rfilename: "model-00001-of-00002.safetensors", size: 2_000_000_000 },
+      ...files,
+    ],
+  };
+  assert.equal(normalizeModels([complete], "mlx").length, 1, "all checkpoint shards form one runnable snapshot");
+
+  for (const siblings of [
+    [{ rfilename: "weights.safetensors", size: 4_000_000_000 }, { rfilename: "tokenizer.json", size: 1_000 }],
+    [{ rfilename: "weights.safetensors", size: 4_000_000_000 }, { rfilename: "config.json", size: 1_000 }],
+  ]) {
+    assert.deepEqual(normalizeModels([{ id: "mlx-community/Missing-Runtime-Asset", pipeline_tag: "text-generation", siblings }], "mlx"), []);
+  }
 });
 
 test("upstream JSON responses are bounded before parsing", async () => {
