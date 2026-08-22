@@ -49,6 +49,9 @@ test("uses conservative lower-bound bandwidth for configurable Max variants", ()
   assert.equal(chipProfiles.m4Max.bandwidthGbps, 410);
   assert.equal(chipProfiles.m5Max.bandwidthGbps, 460);
 });
+test("uses the published M3 Ultra bandwidth", () => {
+  assert.equal(chipProfiles.m3Ultra.bandwidthGbps, 819);
+});
 test("returns typed field errors while preserving the API error list", () => {
   const invalid = validateConfig({ chip: "m4Pro", memoryGb: 16, diskGb: 0, workload: "other" });
   assert.equal(invalid.valid, false);
@@ -152,7 +155,9 @@ test("names the exact GGUF file in links and runtime guidance", () => {
   assert.equal(recommendation.viewUrl, undefined, "hand-built fixtures without a viewer URL fall back to the repository");
   const llama = recommendation.guidance.find((guide) => guide.runtime === "llama.cpp")!.command;
   assert.match(llama, /curl --fail --location --create-dirs 'https:\/\/huggingface\.co\/org\/Coder-7B-GGUF\/resolve\/main\/model\.Q4_K_M\.gguf'/);
-  assert.match(llama, /--output \"\$workdir\/\"'model\.Q4_K_M\.gguf'/);
+  assert.match(llama, /--output \"\$modeldir\/\"'model\.Q4_K_M\.gguf'/);
+  assert.match(llama, /modeldir=\"\$PWD\/local-models\/\"'local-/);
+  assert.doesNotMatch(llama, /mktemp|trap 'rm -rf/);
   assert.doesNotMatch(llama, /--hf-repo/);
 });
 
@@ -183,6 +188,8 @@ test("uses exact-file LM Studio and mlx-lm installation guidance", () => {
 
   const mlxGuidance = buildGuidance(mlx, ["MLX"])[0].command;
   assert.match(mlxGuidance, /uvx --from mlx-lm mlx_lm\.generate/);
+  assert.match(mlxGuidance, /modeldir=\"\$PWD\/local-models\/\"'local-/);
+  assert.doesNotMatch(mlxGuidance, /mktemp|trap 'rm -rf/);
 });
 
 test("uses the exact public GGUF URL and pins MLX downloads to the catalogue revision", () => {
@@ -190,14 +197,14 @@ test("uses the exact public GGUF URL and pins MLX downloads to the catalogue rev
   const llama = buildGuidance(pinnedGguf, ["llama.cpp"])[0].command;
   assert.match(llama, /curl --fail --location --create-dirs 'https:\/\/huggingface\.co\/org\/Coder-7B-GGUF\/resolve\/9f4d7c1\/model\.Q4_K_M\.gguf'/);
   assert.doesNotMatch(llama, /hf download/);
-  assert.match(llama, /llama-cli -m \"\$workdir\/\"'model\.Q4_K_M\.gguf'/);
+  assert.match(llama, /llama-cli -m \"\$modeldir\/\"'model\.Q4_K_M\.gguf'/);
   assert.doesNotMatch(llama, /--hf-repo/);
 
   const pinnedMlx = { ...mlx, revision: "a1b2c3" };
   const mlxGuidance = buildGuidance(pinnedMlx, ["MLX"])[0].command;
-  assert.match(mlxGuidance, /uvx hf download --revision 'a1b2c3' --local-dir \"\$workdir\" -- 'mlx-community\/Coder-7B-4bit'/);
-  assert.match(mlxGuidance, /--local-dir \"\$workdir\"/);
-  assert.match(mlxGuidance, /--model \"\$workdir\"/);
+  assert.match(mlxGuidance, /uvx hf download --revision 'a1b2c3' --local-dir \"\$modeldir\" -- 'mlx-community\/Coder-7B-4bit'/);
+  assert.match(mlxGuidance, /--local-dir \"\$modeldir\"/);
+  assert.match(mlxGuidance, /--model \"\$modeldir\"/);
 });
 test("uses authenticated exact-revision downloads for gated artifacts", () => {
   const gated = { ...gguf, gated: true, revision: "9f4d7c1" };
@@ -209,14 +216,14 @@ test("uses authenticated exact-revision downloads for gated artifacts", () => {
 
   const gatedMlx = buildGuidance({ ...mlx, gated: true, revision: "a1b2c3" }, ["MLX"])[0].command;
   assert.match(gatedMlx, /uvx hf auth login/);
-  assert.match(gatedMlx, /uvx hf download --revision 'a1b2c3' --local-dir \"\$workdir\" -- 'mlx-community\/Coder-7B-4bit'/);
+  assert.match(gatedMlx, /uvx hf download --revision 'a1b2c3' --local-dir \"\$modeldir\" -- 'mlx-community\/Coder-7B-4bit'/);
   assert.match(gatedMlx, /mlx_lm\.generate/);
 });
 
 test("terminates hf options before catalogue-controlled filenames", () => {
   const hostile = { ...gguf, gated: true, revision: "9f4d7c1", filename: "--exclude=*.gguf" };
   const command = buildGuidance(hostile, ["llama.cpp"])[0].command;
-  assert.match(command, /hf download --revision '9f4d7c1' --local-dir \"\$workdir\" -- 'org\/Coder-7B-GGUF' '--exclude=\*\.gguf'/);
+  assert.match(command, /hf download --revision '9f4d7c1' --local-dir \"\$modeldir\" -- 'org\/Coder-7B-GGUF' '--exclude=\*\.gguf'/);
   assert.equal(spawnSync("sh", ["-n", "-c", command]).status, 0);
 });
 
@@ -248,6 +255,7 @@ test("returns typed fit explanations and actionable exclusion categories", () =>
   assert.equal(result.exclusions.invalidSize, 1);
   assert.equal(result.recommendations[0].explanation.fit.disk.availableBytes, 20_000_000_000);
   assert.equal(result.recommendations[0].explanation.fit.memory.assumption.includes("normal-context"), true);
+  assert.match(result.recommendations[0].explanation.fit.runtimeAssumption, /inferred from the artifact format/);
   assert.equal(result.recommendations[0].explanation.fit.workload.category, "coding-oriented");
   assert.ok(result.recommendations[0].explanation.rankingFactors.length >= 3);
 });
@@ -436,13 +444,13 @@ test("failed cold refreshes respect retry backoff", async () => {
   await assert.rejects(cache.get(), /backing off/);
   assert.equal(calls, 1);
 });
-test("thirty-second cold-start deadline aborts requests and preserves the unavailable response", async () => {
+test("request deadlines abort cold-start requests and preserve the unavailable response", async () => {
   let requestAborted = false;
   const hangingFetch = (_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
     init?.signal?.addEventListener("abort", () => { requestAborted = true; reject(init.signal?.reason); }, { once: true });
   });
   assert.equal(REFRESH_TIMEOUT_MS, 30_000);
-  await assert.rejects(retrieveCatalogue(hangingFetch as typeof fetch));
+  await assert.rejects(retrieveCatalogue(hangingFetch as typeof fetch, REFRESH_TIMEOUT_MS, 5));
   assert.equal(requestAborted, true, "the refresh deadline reaches outstanding requests");
 
   const empty = new CatalogueCache(() => retrieveCatalogue(hangingFetch as typeof fetch, 5));

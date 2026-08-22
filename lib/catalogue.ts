@@ -2,7 +2,7 @@ import { CatalogueCache, type Catalogue, type RefreshScheduler } from "./catalog
 import type { Artifact, ExclusionSummary } from "./recommendations";
 import { cacheLife } from "next/cache";
 import { after } from "next/server";
-import { fetchJson, mapWithConcurrency, type FetchLike, REFRESH_TIMEOUT_MS } from "./catalogue-request";
+import { fetchJson, mapWithConcurrency, type FetchLike, REFRESH_TIMEOUT_MS, REQUEST_TIMEOUT_MS } from "./catalogue-request";
 
 const MIN_ARTIFACT_BYTES = 100_000_000;
 const MAX_FILES_PER_REPOSITORY = 20_000;
@@ -330,9 +330,9 @@ export function interleaveUnique(lists: HubModel[][], limit: number): HubModel[]
   return selected;
 }
 
-async function retrieveModelMetadata(model: HubModel, fetcher: FetchLike, refreshSignal: AbortSignal): Promise<HubModel | undefined> {
+async function retrieveModelMetadata(model: HubModel, fetcher: FetchLike, refreshSignal: AbortSignal, requestTimeoutMs: number): Promise<HubModel | undefined> {
   try {
-    return normalizeHubModel(await fetchJson(modelInfoUrl(model.id), fetcher, refreshSignal, "Hugging Face"));
+    return normalizeHubModel(await fetchJson(modelInfoUrl(model.id), fetcher, refreshSignal, "Hugging Face", requestTimeoutMs));
   } catch (error) {
     // The overall refresh deadline invalidates the entire sample. A request
     // timeout or ordinary repository failure remains isolated to that one repo.
@@ -344,7 +344,7 @@ async function retrieveModelMetadata(model: HubModel, fetcher: FetchLike, refres
   }
 }
 
-export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeoutMs = REFRESH_TIMEOUT_MS): Promise<Catalogue> {
+export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeoutMs = REFRESH_TIMEOUT_MS, requestTimeoutMs = REQUEST_TIMEOUT_MS): Promise<Catalogue> {
   const refreshController = new AbortController();
   const deadline = setTimeout(() => refreshController.abort(new Error("Hugging Face catalogue refresh timed out")), refreshTimeoutMs);
   try {
@@ -354,10 +354,10 @@ export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeo
     // format.
     const listBase = `${HUB_BASE}?full=true&limit=20&direction=-1`;
     const [popularGguf, recentGguf, popularMlx, recentMlx] = await Promise.all([
-      fetchJson(`${listBase}&sort=downloads&filter=gguf`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
-      fetchJson(`${listBase}&sort=lastModified&filter=gguf`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
-      fetchJson(`${listBase}&sort=downloads&author=mlx-community`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
-      fetchJson(`${listBase}&sort=lastModified&author=mlx-community`, fetcher, refreshController.signal, "Hugging Face").then(parseHubModelList),
+      fetchJson(`${listBase}&sort=downloads&filter=gguf`, fetcher, refreshController.signal, "Hugging Face", requestTimeoutMs).then(parseHubModelList),
+      fetchJson(`${listBase}&sort=lastModified&filter=gguf`, fetcher, refreshController.signal, "Hugging Face", requestTimeoutMs).then(parseHubModelList),
+      fetchJson(`${listBase}&sort=downloads&author=mlx-community`, fetcher, refreshController.signal, "Hugging Face", requestTimeoutMs).then(parseHubModelList),
+      fetchJson(`${listBase}&sort=lastModified&author=mlx-community`, fetcher, refreshController.signal, "Hugging Face", requestTimeoutMs).then(parseHubModelList),
     ]);
     const ggufList = interleaveUnique([popularGguf, recentGguf], 20);
     const mlxList = interleaveUnique([popularMlx, recentMlx], 20);
@@ -369,7 +369,7 @@ export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeo
     const detailed = await mapWithConcurrency(
       [...ggufList.map((model) => ({ format: "gguf" as const, model })), ...mlxList.map((model) => ({ format: "mlx" as const, model }))],
       6,
-      async ({ format, model }) => ({ format, model: await retrieveModelMetadata(model, fetcher, refreshController.signal) }),
+      async ({ format, model }) => ({ format, model: await retrieveModelMetadata(model, fetcher, refreshController.signal, requestTimeoutMs) }),
     );
     refreshController.signal.throwIfAborted();
     const detailFailures = detailed.filter((entry) => entry.model === undefined).length;

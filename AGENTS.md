@@ -40,6 +40,16 @@ chat and coding models for a selected Apple Silicon Mac configuration.
 
 - Validate chip and unified-memory combinations against `chipProfiles`; do not
   accept impossible hardware configurations.
+- Treat the M1 through M5 family entries currently in `chipProfiles` as a
+  verified hardware baseline. Do not recheck or change their supported unified
+  memory configurations or conservative family-level memory-bandwidth values
+  during routine work. Where a family has multiple chip bins, the baseline may
+  intentionally use the lowest published bandwidth (for example, the Max
+  families) so pace estimates remain conservative.
+- Reverify that baseline only when the user explicitly requests a hardware-data
+  audit or when correcting specific evidence that an entry is wrong. Verify
+  newly added chip families beyond M5 against Apple's published specifications
+  before adding them.
 - Keep memory estimates conservative and disk-fit checks strict.
 - Treat expected pace as a qualitative estimate based on memory bandwidth and
   model footprint, never as a tokens-per-second benchmark.

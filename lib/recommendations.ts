@@ -48,6 +48,7 @@ export type RecommendationExplanation = {
     memory: { availableGb: number; headroomGb: number; assumption: string };
     context: { preset: ContextPreset; label: string; requestedTokens: number; maxTokens?: number };
     runtimes: Recommendation["runtimes"];
+    runtimeAssumption: string;
     workload: { category: WorkloadCategory; relevance: string };
     pace: { bandwidthGbps: number; inputs: string };
   };
@@ -228,27 +229,23 @@ export function buildGuidance(item: Artifact, runtimes: Recommendation["runtimes
   const filename = item.filename ?? "model.gguf";
   const revisionOption = item.revision ? ` --revision ${shellQuote(item.revision)}` : "";
   const modelName = localModelName(item);
-  const modelFile = shellPath("$workdir", filename);
-  const modelDirectory = '"$workdir"';
+  const temporaryModelFile = shellPath("$workdir", filename);
+  const persistentModelFile = shellPath("$modeldir", filename);
+  const persistentDirectory = `"$PWD/local-models/"${shellQuote(modelName)}`;
   const modelfile = `printf '%s\\n' "FROM $workdir/"${shellQuote(filename)} > "$workdir/Modelfile"`;
   const hf = item.format === "mlx" ? "uvx hf" : "hf";
-  const hfDownload = `${hf} download${revisionOption} --local-dir "$workdir" -- ${shellQuote(item.modelId)}${item.filename ? ` ${shellQuote(item.filename)}` : ""}`;
-  const curlDownload = item.filename
+  const hfDownload = (directory: "$workdir" | "$modeldir") => `${hf} download${revisionOption} --local-dir "${directory}" -- ${shellQuote(item.modelId)}${item.filename ? ` ${shellQuote(item.filename)}` : ""}`;
+  const download = (directory: "$workdir" | "$modeldir", modelFile: string) => item.format === "gguf" && !item.gated && item.filename
     ? `curl --fail --location --create-dirs ${shellQuote(item.sourceUrl)} --output ${modelFile}`
-    : hfDownload;
-  const ungatedDownload = item.format === "gguf" ? curlDownload : hfDownload;
-  const setup = (authenticated: boolean, download: string) => `set -eu && workdir="$(mktemp -d)" && trap 'rm -rf "$workdir"' EXIT && ${authenticated ? `${hf} auth login && ${download}` : download}`;
+    : hfDownload(directory);
+  const authenticate = item.gated ? `${hf} auth login && ` : "";
+  const temporarySetup = `set -eu && workdir="$(mktemp -d)" && trap 'rm -rf "$workdir"' EXIT && ${authenticate}${download("$workdir", temporaryModelFile)}`;
+  const persistentSetup = `set -eu && modeldir=${persistentDirectory} && mkdir -p "$modeldir" && ${authenticate}${download("$modeldir", persistentModelFile)}`;
   return runtimes.map((runtime) => {
-    if (!item.gated) {
-      if (runtime === "Ollama") return { runtime, command: `${setup(false, ungatedDownload)} && ${modelfile} && ollama create ${shellQuote(modelName)} -f "$workdir/Modelfile" && ollama run ${shellQuote(modelName)}` };
-      if (runtime === "LM Studio") return { runtime, command: `${setup(false, ungatedDownload)} && lms import ${modelFile}` };
-      if (runtime === "llama.cpp") return { runtime, command: `${setup(false, ungatedDownload)} && llama-cli -m ${modelFile} -p "Hello"` };
-      return { runtime, command: `${setup(false, ungatedDownload)} && uvx --from mlx-lm mlx_lm.generate --model ${modelDirectory} --prompt "Hello"` };
-    }
-    if (runtime === "Ollama") return { runtime, command: `${setup(true, hfDownload)} && ${modelfile} && ollama create ${shellQuote(modelName)} -f "$workdir/Modelfile" && ollama run ${shellQuote(modelName)}` };
-    if (runtime === "LM Studio") return { runtime, command: `${setup(true, hfDownload)} && lms import ${modelFile}` };
-    if (runtime === "llama.cpp") return { runtime, command: `${setup(true, hfDownload)} && llama-cli -m ${modelFile} -p "Hello"` };
-    return { runtime, command: `${setup(true, hfDownload)} && uvx --from mlx-lm mlx_lm.generate --model ${modelDirectory} --prompt "Hello"` };
+    if (runtime === "Ollama") return { runtime, command: `${temporarySetup} && ${modelfile} && ollama create ${shellQuote(modelName)} -f "$workdir/Modelfile" && ollama run ${shellQuote(modelName)}` };
+    if (runtime === "LM Studio") return { runtime, command: `${temporarySetup} && lms import ${temporaryModelFile}` };
+    if (runtime === "llama.cpp") return { runtime, command: `${persistentSetup} && llama-cli -m ${persistentModelFile} -p "Hello"` };
+    return { runtime, command: `${persistentSetup} && uvx --from mlx-lm mlx_lm.generate --model "$modeldir" --prompt "Hello"` };
   });
 }
 
@@ -294,7 +291,46 @@ export function rankArtifactsWithExplanations(artifacts: Artifact[], config: Mac
       "More recently updated catalogue entries receive a small, bounded freshness signal.",
       "Download count is used as a light popularity signal, not a quality benchmark.",
     ];
-    return [{ ...item, runtimes, memoryGb, performance, pace, notes, why: `${item.paramsB ? `${item.paramsB}B parameters` : "A current compact model"}; ${workloadRelevance(category, config.workload)} It leaves ${memoryHeadroom.toFixed(1)} GB of estimated memory headroom at the ${contextLabels[context].toLowerCase()} context preset.`, guidance: buildGuidance(item, runtimes), explanation: { fit: { disk: { availableBytes: availableDiskBytes, requiredBytes: requiredDiskBytes, headroomBytes: diskHeadroom, assumption: diskAssumption(item, runtimes) }, memory: { availableGb: config.memoryGb, headroomGb: memoryHeadroom, assumption: `File mapping plus conservative runtime, ${contextLabels[context].toLowerCase()}-context, and KV-cache overhead.` }, context: { preset: context, label: contextLabels[context], requestedTokens: contextTokens[context], maxTokens: item.maxContextTokens }, runtimes, workload: { category, relevance: workloadRelevance(category, config.workload) }, pace: { bandwidthGbps: profile.bandwidthGbps, inputs: "Published family memory bandwidth relative to estimated model memory." } }, rankingFactors, familyKey: familyKey(item) } }];
+    return [{
+      ...item,
+      runtimes,
+      memoryGb,
+      performance,
+      pace,
+      notes,
+      why: `${item.paramsB ? `${item.paramsB}B parameters` : "A current compact model"}; ${workloadRelevance(category, config.workload)} It leaves ${memoryHeadroom.toFixed(1)} GB of estimated memory headroom at the ${contextLabels[context].toLowerCase()} context preset.`,
+      guidance: buildGuidance(item, runtimes),
+      explanation: {
+        fit: {
+          disk: {
+            availableBytes: availableDiskBytes,
+            requiredBytes: requiredDiskBytes,
+            headroomBytes: diskHeadroom,
+            assumption: diskAssumption(item, runtimes),
+          },
+          memory: {
+            availableGb: config.memoryGb,
+            headroomGb: memoryHeadroom,
+            assumption: `File mapping plus conservative runtime, ${contextLabels[context].toLowerCase()}-context, and KV-cache overhead.`,
+          },
+          context: {
+            preset: context,
+            label: contextLabels[context],
+            requestedTokens: contextTokens[context],
+            maxTokens: item.maxContextTokens,
+          },
+          runtimes,
+          runtimeAssumption: "Runtime support is inferred from the artifact format; the model architecture is not verified against an installed runtime version.",
+          workload: { category, relevance: workloadRelevance(category, config.workload) },
+          pace: {
+            bandwidthGbps: profile.bandwidthGbps,
+            inputs: "Published family memory bandwidth relative to estimated model memory.",
+          },
+        },
+        rankingFactors,
+        familyKey: familyKey(item),
+      },
+    }];
   });
   const grouped = new Map<string, Recommendation>();
   for (const item of eligible.sort((a, b) => {

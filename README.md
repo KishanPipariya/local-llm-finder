@@ -57,7 +57,12 @@ open the Hugging Face viewer while public GGUF installation guidance downloads
 the exact revision URL with macOS's built-in `curl`. Gated GGUF artifacts keep
 their licence and `hf` CLI prerequisite warning, then use `hf auth login` plus
 an exact-revision download. MLX guidance uses `uvx hf` and `mlx-lm`, so it
-requires `uv`/`uvx` rather than a separately installed `hf` command.
+requires `uv`/`uvx` rather than a separately installed `hf` command. llama.cpp
+and MLX recipes keep their downloads in an artifact-specific directory under
+`./local-models`; Ollama and LM Studio use temporary staging because their
+import steps persist the model elsewhere. Runtime suggestions are inferred from
+GGUF or MLX format and do not verify architecture support in the installed app
+version.
 
 ## Catalogue refresh and fallback
 
@@ -108,7 +113,7 @@ npm run smoke:deploy -- https://your-deployment.example
 
 It checks a server-rendered GET and JSON API shortlists for Ollama, LM Studio,
 llama.cpp, and MLX. It reports stale catalogue status and fails on unavailable,
-malformed, or empty compatible results. Submitted configurations are request-only.
+malformed, or empty format-compatible results. Submitted configurations are request-only.
 
 For project internals, development checks, and architecture details, see [codewiki.md](codewiki.md).
 For a repeatable demo handoff, see [the showcase checklist](docs/showcase-checklist.md).

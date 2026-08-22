@@ -114,6 +114,7 @@ and long links and disclosure summaries wrap rather than overflow.
 | `mise.toml` | Node 24 version-management configuration. |
 | `.nvmrc` | Node 24 configuration for nvm. |
 | `scripts/check-node-version.mjs` | Enforces Node 24 for release checks. |
+| `scripts/prepare.mjs` | Configures Husky in development while allowing production-only installs without the Husky dependency. |
 | `scripts/deploy-smoke.mjs` | Tests a deployment's GET finder flow and all supported API runtime filters without persisting configurations. |
 
 ## Core domain contracts
@@ -165,11 +166,13 @@ artifacts.
   evidence by themselves; otherwise the repository is counted as an unsupported
   artifact. At most 64 valid GGUF files are retained from one repository so an
   unusually large upstream repository cannot expand ranking work without bound.
-  It supports Ollama, LM Studio, and llama.cpp. Each
-  runtime recipe downloads into a fresh temporary directory (`curl` for every
-  public GGUF file, `hf` for gated GGUF files, and `uvx hf` for MLX snapshots),
-  uses an artifact-specific local model name, and shell-quotes catalogue-controlled
-  values. Hugging Face CLI options precede an explicit `--` terminator so even
+  Its format is usable by Ollama, LM Studio, and llama.cpp when the installed
+  runtime supports the model architecture. Ollama and LM Studio recipes use a
+  fresh temporary staging directory because their import steps persist the
+  model. llama.cpp keeps the exact GGUF file in an artifact-specific directory
+  below `./local-models`. Downloads use `curl` for public GGUF files and `hf` for
+  gated GGUF files, artifact-specific local model names, and shell-quoted
+  catalogue-controlled values. Hugging Face CLI options precede an explicit `--` terminator so even
   a leading-hyphen upstream filename remains a positional filename rather than
   an injected option; unsafe control-character and traversal paths are discarded
   before guidance is built. Arbitrary Hugging Face files never use `ollama pull`
@@ -183,8 +186,10 @@ artifacts.
   file in the repository snapshot—not only recognised runtime assets.
   Any unknown, non-integer, or non-positive included file size excludes the
   artifact, and the aggregate must meet the 100 MB minimum. This keeps snapshot
-  download estimates conservative. Its guidance uses `uvx hf` for the snapshot
-  and `uvx --from mlx-lm mlx_lm.generate`, requiring `uv`/`uvx`. It supports MLX.
+  download estimates conservative. Its guidance uses `uvx hf` to keep the
+  snapshot in an artifact-specific directory below `./local-models`, then runs
+  `uvx --from mlx-lm mlx_lm.generate`, requiring `uv`/`uvx`. The format is usable
+  by MLX-LM when that installed version supports the model architecture.
 - Disk fit is operationally strict: normal downloads and temporary working files
   use a 1.25× artifact estimate, while GGUF results that retain Ollama use 2.5×
   to account for the downloaded file and temporary import copy while preserving
@@ -195,8 +200,8 @@ artifacts.
 - Memory estimate adds conservative file-mapping, runtime, and context overhead.
   Small (4K tokens) is for short chats, Normal (16K tokens) is the default for
   typical chat/coding, and Long (32K tokens) reserves more headroom for large
-  documents or repositories. A selected runtime filters results to directly
-  usable formats and gives each card one exact-file setup command.
+  documents or repositories. A selected runtime filters results to
+  format-compatible artifacts and gives each card one exact-file setup command.
   Context surcharges remain additive even for large artifacts, so changing from
   Small to Normal to Long always changes the estimate. Parameter metadata is
   ignored when it is implausibly large for the exact artifact size. A model is
@@ -204,8 +209,10 @@ artifacts.
   warn when estimated unified-memory headroom is below 2 GB; eligibility itself
   remains unchanged. Known model context limits below the selected 4K, 16K, or
   32K preset are excluded as `insufficientContext`; unknown limits remain
-  eligible but are labeled as memory-only estimates. Fit estimates are not
-  run-success guarantees.
+  eligible but are labeled as memory-only estimates. Runtime candidates are
+  inferred from artifact format; architecture support is not verified against
+  an installed runtime version and the UI/API fit explanation says so
+  explicitly. Fit estimates are not run-success guarantees.
 - Gated models remain eligible, but carry the appropriate download-tool
   prerequisite, sign-in, and licence-acceptance note. Gated GGUF guidance starts
   with `hf auth login`; gated MLX guidance uses `uvx hf auth login`. Both download
@@ -224,7 +231,8 @@ It keeps the highest-ranked representative of
 each normalized model-family/format/quantization variant, prioritizes one
 representative from each family before adding additional variants, and returns at most ten results. Every returned
 recommendation includes typed fit checks (disk and memory headroom, verified or
-unknown context capacity, compatible runtimes, workload category, and pace
+unknown context capacity, likely format-derived runtimes and their unverified-
+architecture assumption, workload category, and pace
 inputs), ranking contributors, and its
 normalized family key. Hugging Face `pipeline_tag` is retained alongside titles
 and tags: generic `text-generation` and `text2text-generation` identify compatible
@@ -286,8 +294,10 @@ GGUF context metadata used to verify the selected context preset. If more than h
 fail within either format, or no verified repository remains for a format, the
 refresh is treated as materially incomplete and fails atomically rather than
 replacing the last valid catalogue with a severely truncated one. Each request has a 12-second
-timeout, while a complete refresh has a 30-second deadline that aborts all
-outstanding work. A refresh-controller abort fails the complete refresh
+production timeout, while a complete refresh has a 30-second deadline that aborts all
+outstanding work. Both limits are injectable at the retrieval boundary so timeout
+tests use millisecond-scale deadlines instead of waiting for production timers.
+A refresh-controller abort fails the complete refresh
 atomically so the last valid local catalogue can be served as stale. An empty
 usable catalogue for either GGUF or MLX also fails the full refresh, preventing a
 successful partial feed from replacing a catalogue that supports all runtimes.
@@ -339,8 +349,9 @@ npm run build
 npm run verify
 ```
 
-`npm install` runs the `prepare` script, which configures Git to use the
-version-controlled Husky hooks in `.husky/`. Both hooks explicitly use
+`npm install` runs `scripts/prepare.mjs`, which configures Git to use the
+version-controlled Husky hooks in `.husky/` when the development dependency is
+installed and exits cleanly for production-only installs. Both hooks explicitly use
 `mise exec node@24` so they do not inherit an incompatible shell Node version.
 `pre-commit` runs linting. `pre-push` runs `npm run verify:prepush` (lint,
 unit tests, and a production build); the longer Playwright/axe suite remains in

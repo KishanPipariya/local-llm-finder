@@ -10,8 +10,8 @@ export const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 export type FetchLike = typeof fetch;
 
-export function requestSignal(refreshSignal: AbortSignal) {
-  return AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), refreshSignal]);
+export function requestSignal(refreshSignal: AbortSignal, requestTimeoutMs = REQUEST_TIMEOUT_MS) {
+  return AbortSignal.any([AbortSignal.timeout(requestTimeoutMs), refreshSignal]);
 }
 
 async function readBoundedText(response: Response, source: string): Promise<string> {
@@ -49,8 +49,8 @@ async function readBoundedText(response: Response, source: string): Promise<stri
   return new TextDecoder().decode(bytes);
 }
 
-export async function fetchJson(url: string, fetcher: FetchLike, refreshSignal: AbortSignal, source: string): Promise<unknown> {
-  const response = await fetcher(url, { signal: requestSignal(refreshSignal) });
+export async function fetchJson(url: string, fetcher: FetchLike, refreshSignal: AbortSignal, source: string, requestTimeoutMs = REQUEST_TIMEOUT_MS): Promise<unknown> {
+  const response = await fetcher(url, { signal: requestSignal(refreshSignal, requestTimeoutMs) });
   if (!response.ok) throw new Error(`${source} request failed (${response.status})`);
   return JSON.parse(await readBoundedText(response, source));
 }
