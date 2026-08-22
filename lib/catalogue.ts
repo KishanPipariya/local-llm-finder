@@ -7,6 +7,14 @@ import { fetchJson, mapWithConcurrency, type FetchLike, REFRESH_TIMEOUT_MS, REQU
 const MIN_ARTIFACT_BYTES = 100_000_000;
 const MAX_FILES_PER_REPOSITORY = 20_000;
 const MAX_GGUF_ARTIFACTS_PER_REPOSITORY = 64;
+const MAX_MODEL_ID_CHARS = 256;
+const MAX_PATH_CHARS = 1_024;
+const MAX_METADATA_STRING_CHARS = 4_096;
+const MAX_TAGS_PER_REPOSITORY = 256;
+const MAX_TAG_CHARS = 256;
+const MAX_PARAMETER_GROUPS = 256;
+const MAX_REPOSITORY_METADATA_CHARS = 1024 * 1024;
+const MAX_CATALOGUE_METADATA_CHARS = 8 * 1024 * 1024;
 export { REFRESH_TIMEOUT_MS } from "./catalogue-request";
 const HUB_BASE = "https://huggingface.co/api/models";
 
@@ -44,6 +52,14 @@ const titleOf = (id: string) => id.split("/").at(-1)?.replace(/-(GGUF|MLX)$/i, "
 const validSize = (size: unknown): size is number => typeof size === "number" && Number.isSafeInteger(size) && size >= MIN_ARTIFACT_BYTES;
 const knownFileSize = (size: unknown): size is number => typeof size === "number" && Number.isSafeInteger(size) && size > 0;
 const isMlxWeightFile = (file: HubFile) => /(?:^|\/)[^/]+\.safetensors$/i.test(file.rfilename) && knownFileSize(file.size);
+const mlxAdapterSignal = /(?:^|[^a-z0-9])(?:adapter|lora|qlora|peft)(?:$|[^a-z0-9])/i;
+const isMlxAdapterRepository = (model: HubModel, files: HubFile[]) => mlxAdapterSignal.test([
+  model.id,
+  model.cardData?.model_name,
+  ...(model.tags ?? []),
+  ...files.map((file) => file.rfilename),
+].filter((value): value is string => typeof value === "string").join(" "));
+const hasRunnableMlxWeights = (model: HubModel, files: HubFile[]) => files.some(isMlxWeightFile) && !isMlxAdapterRepository(model, files);
 const supportedPipelineTags = new Set(["text-generation", "text2text-generation", "conversational"]);
 const textModelSignal = /(?:^|[^a-z])(?:instruct|chat|assistant|conversation|conversational|code|coder|coding|programming|text-generation|text-model|language-model|llm)(?:$|[^a-z])/i;
 const isSupportedTask = (model: HubModel) => {
@@ -72,13 +88,18 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function asBoundedString(value: unknown, maxLength = MAX_METADATA_STRING_CHARS): string | undefined {
+  const candidate = asString(value);
+  return candidate !== undefined && candidate.length <= maxLength ? candidate : undefined;
+}
+
 const hasUnsafeControlCharacter = (value: string) => /[\u0000-\u001F\u007F]/.test(value);
 const isSafeRelativePath = (value: string) => {
-  if (!value || hasUnsafeControlCharacter(value) || value.startsWith("/")) return false;
+  if (!value || value.length > MAX_PATH_CHARS || hasUnsafeControlCharacter(value) || value.startsWith("/")) return false;
   return value.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
 };
 const isSafeModelId = (value: string) => {
-  if (!value || hasUnsafeControlCharacter(value) || /[\s?#%\\]/.test(value) || value.startsWith("-")) return false;
+  if (!value || value.length > MAX_MODEL_ID_CHARS || hasUnsafeControlCharacter(value) || /[\s?#%\\]/.test(value) || value.startsWith("-")) return false;
   const segments = value.split("/");
   return segments.length === 2 && segments.every((segment) => segment.length > 0 && segment !== "." && segment !== ".." && !segment.startsWith("-"));
 };
@@ -99,15 +120,15 @@ function normalizeHubFile(value: unknown): HubFile | undefined {
 function normalizeCardData(value: unknown): HubModel["cardData"] | undefined {
   const cardData = asRecord(value);
   if (!cardData) return undefined;
-  const license = asString(cardData.license);
-  const modelName = asString(cardData.model_name);
+  const license = asBoundedString(cardData.license);
+  const modelName = asBoundedString(cardData.model_name);
   const rawParams = cardData.params;
-  const params = typeof rawParams === "string" || typeof rawParams === "number" ? rawParams : undefined;
+  const params = typeof rawParams === "number" ? rawParams : asBoundedString(rawParams);
   const baseModelValue = cardData.base_model;
   const baseModel = typeof baseModelValue === "string"
-    ? baseModelValue.trim() || undefined
+    ? asBoundedString(baseModelValue.trim()) || undefined
     : Array.isArray(baseModelValue)
-      ? baseModelValue.find((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0)?.trim()
+      ? baseModelValue.slice(0, MAX_PARAMETER_GROUPS).map((candidate) => typeof candidate === "string" ? asBoundedString(candidate.trim()) : undefined).find((candidate) => candidate !== undefined && candidate.length > 0)
       : undefined;
   return license === undefined && modelName === undefined && params === undefined && baseModel === undefined
     ? undefined
@@ -118,7 +139,7 @@ function normalizeGguf(value: unknown): HubModel["gguf"] | undefined {
   const gguf = asRecord(value);
   if (!gguf) return undefined;
   const total = asFiniteNumber(gguf.total);
-  const chatTemplate = asString(gguf.chat_template);
+  const chatTemplate = asBoundedString(gguf.chat_template);
   const contextLength = asFiniteNumber(gguf.context_length);
   return total === undefined && chatTemplate === undefined && contextLength === undefined ? undefined : { total, chat_template: chatTemplate, context_length: contextLength };
 }
@@ -128,10 +149,11 @@ function normalizeSafetensors(value: unknown): HubModel["safetensors"] | undefin
   if (!safetensors) return undefined;
   const total = asFiniteNumber(safetensors.total);
   const rawParameters = asRecord(safetensors.parameters);
-  const parsedParameters = rawParameters
-    ? Object.fromEntries(Object.entries(rawParameters).flatMap(([key, candidate]) => {
+  const parameterEntries = rawParameters ? Object.entries(rawParameters) : undefined;
+  const parsedParameters = parameterEntries && parameterEntries.length <= MAX_PARAMETER_GROUPS
+    ? Object.fromEntries(parameterEntries.flatMap(([key, candidate]) => {
       const parsed = asFiniteNumber(candidate);
-      return parsed === undefined ? [] : [[key, parsed]];
+      return parsed === undefined || key.length > MAX_TAG_CHARS ? [] : [[key, parsed]];
     }))
     : undefined;
   const parameters = parsedParameters && Object.keys(parsedParameters).length > 0 ? parsedParameters : undefined;
@@ -156,17 +178,21 @@ export function normalizeHubModel(value: unknown): HubModel | undefined {
   if (!model) return undefined;
   const id = asString(model.id);
   if (!id || !isSafeModelId(id)) return undefined;
-  const sha = asString(model.sha)?.trim() || undefined;
+  const sha = asBoundedString(model.sha, 256)?.trim() || undefined;
   const downloads = asFiniteNumber(model.downloads);
-  const lastModified = asString(model.lastModified);
-  const gated = typeof model.gated === "boolean" || typeof model.gated === "string" ? model.gated : undefined;
-  const tags = Array.isArray(model.tags) ? model.tags.filter((tag): tag is string => typeof tag === "string") : undefined;
-  const pipelineTag = asString(model.pipeline_tag);
+  const lastModified = asBoundedString(model.lastModified);
+  const gated = typeof model.gated === "boolean" ? model.gated : asBoundedString(model.gated);
+  if (Array.isArray(model.tags) && model.tags.length > MAX_TAGS_PER_REPOSITORY) return undefined;
+  const tags = Array.isArray(model.tags) ? model.tags.flatMap((tag) => {
+    const normalized = asBoundedString(tag, MAX_TAG_CHARS);
+    return normalized === undefined ? [] : [normalized];
+  }) : undefined;
+  const pipelineTag = asBoundedString(model.pipeline_tag);
   if (Array.isArray(model.siblings) && model.siblings.length > MAX_FILES_PER_REPOSITORY) return undefined;
   const siblings = Array.isArray(model.siblings)
     ? model.siblings.map(normalizeHubFile).filter((file): file is HubFile => file !== undefined)
     : undefined;
-  return {
+  const normalized: HubModel = {
     id,
     sha,
     downloads,
@@ -180,6 +206,26 @@ export function normalizeHubModel(value: unknown): HubModel | undefined {
     cardData: normalizeCardData(model.cardData),
     siblings,
   };
+  return normalizedMetadataCharacters(normalized) <= MAX_REPOSITORY_METADATA_CHARS ? normalized : undefined;
+}
+
+function normalizedMetadataCharacters(model: HubModel) {
+  const strings = [
+    model.id,
+    model.sha,
+    model.lastModified,
+    typeof model.gated === "string" ? model.gated : undefined,
+    model.pipeline_tag,
+    model.gguf?.chat_template,
+    model.cardData?.license,
+    model.cardData?.model_name,
+    typeof model.cardData?.params === "string" ? model.cardData.params : undefined,
+    model.cardData?.base_model,
+    ...(model.tags ?? []),
+    ...(model.siblings ?? []).map((file) => file.rfilename),
+    ...Object.keys(model.safetensors?.parameters ?? {}),
+  ];
+  return strings.reduce((total, candidate) => total + (candidate?.length ?? 0), 0);
 }
 
 export function isHubModel(value: unknown): value is HubModel {
@@ -252,7 +298,7 @@ export function normalizeModels(models: HubModel[], format: Artifact["format"]):
     // not recognised as runtime assets, and reject unknown sizes so disk-fit
     // guidance remains conservative.
     const sizeBytes = format === "gguf" ? undefined : matched.reduce((sum, file) => knownFileSize(file.size) ? sum + file.size : Number.NaN, 0);
-    if (format === "mlx" && (!matched.some(isMlxWeightFile) || !validSize(sizeBytes))) return [];
+    if (format === "mlx" && (!hasRunnableMlxWeights(model, matched) || !validSize(sizeBytes))) return [];
     return selectedFiles.flatMap((selected) => {
       const artifactSize = format === "gguf" ? selected!.size : sizeBytes;
       if (!validSize(artifactSize)) return [];
@@ -305,7 +351,7 @@ export function normalizationExclusions(models: HubModel[], format: Artifact["fo
       // MLX is downloaded as one repository snapshot, so its exclusion stays
       // at repository level. Missing weights are an unsupported artifact;
       // invalid sizes are reserved for an otherwise complete snapshot.
-      if (!matched.some(isMlxWeightFile) || !isSupportedTask(model)) counts.unsupportedArtifact = (counts.unsupportedArtifact ?? 0) + 1;
+      if (!hasRunnableMlxWeights(model, matched) || !isSupportedTask(model)) counts.unsupportedArtifact = (counts.unsupportedArtifact ?? 0) + 1;
       else if (!normalizeModels([model], format).length) counts.invalidSize = (counts.invalidSize ?? 0) + 1;
     } else if (!isSupportedTask(model)) counts.unsupportedArtifact = (counts.unsupportedArtifact ?? 0) + 1;
     return counts;
@@ -344,7 +390,7 @@ async function retrieveModelMetadata(model: HubModel, fetcher: FetchLike, refres
   }
 }
 
-export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeoutMs = REFRESH_TIMEOUT_MS, requestTimeoutMs = REQUEST_TIMEOUT_MS): Promise<Catalogue> {
+export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeoutMs = REFRESH_TIMEOUT_MS, requestTimeoutMs = REQUEST_TIMEOUT_MS, maxNormalizedMetadataChars = MAX_CATALOGUE_METADATA_CHARS): Promise<Catalogue> {
   const refreshController = new AbortController();
   const deadline = setTimeout(() => refreshController.abort(new Error("Hugging Face catalogue refresh timed out")), refreshTimeoutMs);
   try {
@@ -374,6 +420,8 @@ export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeo
     refreshController.signal.throwIfAborted();
     const detailFailures = detailed.filter((entry) => entry.model === undefined).length;
     if (detailFailures > detailed.length / 2) throw new Error("Hugging Face catalogue metadata refresh was materially incomplete");
+    const normalizedMetadataChars = detailed.reduce((total, entry) => total + (entry.model ? normalizedMetadataCharacters(entry.model) : 0), 0);
+    if (normalizedMetadataChars > maxNormalizedMetadataChars) throw new Error("Hugging Face catalogue metadata exceeded the normalized size limit");
     for (const format of ["gguf", "mlx"] as const) {
       const formatEntries = detailed.filter((entry) => entry.format === format);
       const verifiedCount = formatEntries.filter((entry) => entry.model !== undefined).length;

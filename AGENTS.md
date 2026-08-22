@@ -79,6 +79,9 @@ chat and coding models for a selected Apple Silicon Mac configuration.
   model warnings.
 - Support GGUF recommendations for Ollama, LM Studio, and llama.cpp, and MLX
   recommendations for MLX.
+- MLX recommendations must be complete, self-contained model snapshots. Reject
+  adapter-only, LoRA, QLoRA, and PEFT repositories even when they contain a
+  `.safetensors` file; never treat adapter weights as a runnable base model.
 - GET and POST must use `validateConfig` and `getRecommendations`; do not
   independently reimplement validation, catalogue handling, or ranking at
   either request boundary.
@@ -88,7 +91,8 @@ chat and coding models for a selected Apple Silicon Mac configuration.
 - Treat all Hugging Face metadata, filenames, URLs, and response bodies as
   untrusted input.
 - Preserve request timeouts, request and response size bounds, bounded
-  concurrency, safe path validation, and shell-safe installation guidance.
+  concurrency, normalized metadata size/cardinality bounds, safe path
+  validation, and shell-safe installation guidance.
 - Installation commands must identify exact normalized artifacts; never turn
   arbitrary catalogue data into an unvalidated shell command.
 

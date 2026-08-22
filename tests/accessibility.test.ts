@@ -175,7 +175,7 @@ try {
   assert.equal(await initial.getByRole("link", { name: "Open Ollama model source: open llama-3.2-3b.Q4_K_M.gguf on Hugging Face in a new tab" }).count(), 1, "top recommendation has a clearly labelled model-source action");
   assert.match(await initial.getByRole("link", { name: "Open Ollama model source: open llama-3.2-3b.Q4_K_M.gguf on Hugging Face in a new tab" }).getAttribute("href") ?? "", /\/blob\/main\//, "source action opens the Hugging Face viewer rather than the download route");
   assert.equal(await initial.getByText("How these results work", { exact: true }).count(), 1, "catalogue caveats are available in a collapsed disclosure");
-  assert.equal(await initial.getByRole("link", { name: "View llama-3.2-3b.Q4_K_M.gguf on Hugging Face (opens in a new tab)" }).count(), 1, "Ollama-compatible entries identify their Hugging Face file source");
+  assert.equal(await initial.locator(".card.top-pick a[href*='/blob/main/']").count(), 1, "the top recommendation has one non-duplicated model-source link");
   await assertUnchangedBox(initial, ".card.top-pick", () => initial.locator(".card.top-pick").hover(), "hovering a recommendation card");
   await assertCardDisclosure(initial, "Installation guidance");
   await initial.locator(".card").first().getByText("Installation guidance", { exact: true }).click();

@@ -12,6 +12,7 @@ const baseConfig = {
   workload: "balanced",
   context: "normal",
 };
+const requestTimeoutMs = 60_000;
 
 function usage() {
   console.error("Usage: npm run smoke:deploy -- https://your-deployment.example");
@@ -69,7 +70,7 @@ async function main() {
   const getConfig = { ...baseConfig, runtime: "ollama" };
   const getUrl = new URL("/", origin);
   Object.entries(getConfig).forEach(([key, value]) => getUrl.searchParams.set(key, String(value)));
-  const getResponse = await fetch(getUrl, { redirect: "error" });
+  const getResponse = await fetch(getUrl, { redirect: "error", signal: AbortSignal.timeout(requestTimeoutMs) });
   assert(getResponse.ok, `GET finder flow failed with HTTP ${getResponse.status}.`);
   const html = await getResponse.text();
   assert(html.includes('id="results"'), "GET finder flow did not render a shortlist.");
@@ -81,6 +82,7 @@ async function main() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...baseConfig, runtime }),
       redirect: "error",
+      signal: AbortSignal.timeout(requestTimeoutMs),
     });
     assert(response.status !== 503, `${runtime}: catalogue is unavailable (503).`);
     assert(response.ok, `${runtime}: API failed with HTTP ${response.status}.`);

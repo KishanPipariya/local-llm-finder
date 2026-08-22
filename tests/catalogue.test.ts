@@ -32,6 +32,11 @@ test("normalization rejects unsafe catalogue paths before generating artifacts",
 test("normalization rejects repositories with excessive metadata cardinality", () => {
   const siblings = Array.from({ length: 20_001 }, (_, index) => ({ rfilename: `file-${index}.json`, size: 1 }));
   assert.equal(normalizeHubModel({ id: "org/Too-Many-Files", siblings }), undefined);
+  assert.equal(normalizeHubModel({ id: "org/Too-Many-Tags", tags: Array.from({ length: 257 }, (_, index) => `tag-${index}`) }), undefined);
+  assert.equal(normalizeHubModel({ id: `org/${"x".repeat(253)}` }), undefined);
+  assert.deepEqual(normalizeHubModel({ id: "org/Long-Path", siblings: [{ rfilename: `${"x".repeat(1_025)}.json`, size: 1 }] })?.siblings, []);
+  const oversizedMetadata = Array.from({ length: 1_025 }, () => ({ rfilename: "x".repeat(1_024), size: 1 }));
+  assert.equal(normalizeHubModel({ id: "org/Too-Much-Metadata", siblings: oversizedMetadata }), undefined);
 });
 
 test("catalogue list parsing rejects a materially malformed upstream sample", () => {
@@ -118,6 +123,23 @@ test("MLX repositories without weights are classified as unsupported artifacts",
   assert.deepEqual(normalizationExclusions([model], "mlx"), { unsupportedArtifact: 1 });
 });
 
+test("MLX adapter-only repositories are not treated as runnable model snapshots", () => {
+  const adapter = {
+    id: "mlx-community/Example-LoRA",
+    pipeline_tag: "text-generation",
+    tags: ["peft", "lora"],
+    siblings: [
+      { rfilename: "adapter_model.safetensors", size: 200_000_000 },
+      { rfilename: "adapter_config.json", size: 1_000 },
+    ],
+  };
+  assert.deepEqual(normalizeModels([adapter], "mlx"), []);
+  assert.deepEqual(normalizationExclusions([adapter], "mlx"), { unsupportedArtifact: 1 });
+
+  const adapterWithGenericWeightName = { ...adapter, id: "mlx-community/Adapter-Example", siblings: [{ rfilename: "weights.safetensors", size: 200_000_000 }] };
+  assert.deepEqual(normalizeModels([adapterWithGenericWeightName], "mlx"), [], "adapter metadata prevents a generic weight filename from bypassing the completeness check");
+});
+
 test("upstream JSON responses are bounded before parsing", async () => {
   const controller = new AbortController();
   const oversized = new Response("{}", { headers: { "content-length": String(MAX_RESPONSE_BYTES + 1) } });
@@ -187,6 +209,10 @@ function upstream(options: { unavailableModel?: string } = {}) {
 test("catalogue refresh fetches blob metadata for every listed repository", async () => {
   const catalogue = await retrieveCatalogue(upstream() as typeof fetch);
   assert.deepEqual(catalogue.items.map((item) => item.format).sort(), ["gguf", "mlx"]);
+});
+
+test("catalogue refresh bounds aggregate normalized metadata", async () => {
+  await assert.rejects(retrieveCatalogue(upstream() as typeof fetch, 30_000, 12_000, 1), /normalized size limit/);
 });
 
 test("framework cache adapter is isolated from the unit-test runtime", async () => {

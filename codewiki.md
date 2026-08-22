@@ -184,6 +184,9 @@ artifacts.
 - MLX: require at least one positively sized `.safetensors` weight file and an
   explicit supported pipeline or text/chat/coding task signal, then sum every
   file in the repository snapshot—not only recognised runtime assets.
+  Adapter-only, LoRA, QLoRA, and PEFT repositories are classified as unsupported
+  artifacts even when they contain a `.safetensors` file, because MLX-LM needs a
+  complete, self-contained base-model snapshot.
   Any unknown, non-integer, or non-positive included file size excludes the
   artifact, and the aggregate must meet the 100 MB minimum. This keeps snapshot
   download estimates conservative. Its guidance uses `uvx hf` to keep the
@@ -287,7 +290,7 @@ newer repositories a chance to enter the bounded detail crawl without making
 refresh latency unbounded.
 Because those list responses contain filenames but not reliable byte sizes, it
 then obtains each selected repository's `blobs=true` metadata with a bounded
-global concurrency of six in-flight requests across both formats. Each upstream response is capped at 8 MiB and each repository is capped at 20,000 metadata files before normalization. A repository that disappears or
+global concurrency of six in-flight requests across both formats. Each upstream response is capped at 8 MiB; normalized identifiers, paths, tags, and metadata strings have field and cardinality limits; one repository can retain at most 1 MiB of normalized text metadata; and a complete refresh can retain at most 8 MiB. Each repository is also capped at 20,000 metadata files before normalization. A repository that disappears or
 fails during that second step is excluded; its unverified files are never
 recommended. The detail response also supplies optional model configuration and
 GGUF context metadata used to verify the selected context preset. If more than half of detail requests fail overall, more than half
@@ -399,6 +402,8 @@ after warming the cache. It performs one valid server-rendered GET and API
 requests for Ollama, LM Studio, llama.cpp, and MLX; it reports stale catalogue
 status and fails on a 503, invalid response shape, or an empty compatible
 shortlist. The check only sends request-scoped configurations and saves none.
+Every deployment request has a 60-second deadline so an unresponsive target
+cannot leave the smoke check running indefinitely.
 
 ## Sharing and showcase assets
 

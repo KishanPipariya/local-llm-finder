@@ -80,7 +80,10 @@ and 20 recently updated repositories filtered by the GGUF format, plus the same 
 repository's `blobs=true` metadata before normalizing it. There are no
 non-Hugging-Face catalogue requests. MLX sizes represent the complete snapshot
 download and are rejected when any repository file has an unknown size; imports
-may also need temporary free disk space beyond the displayed download size. GGUF
+may also need temporary free disk space beyond the displayed download size.
+Adapter-only LoRA, QLoRA, and PEFT repositories are not treated as runnable MLX
+base models. Normalized metadata has per-field, per-repository, and whole-refresh
+size limits in addition to the upstream response-size bound. GGUF
 results that can fit Ollama reserve a larger operational disk estimate for the
 download and temporary import copy. With the runtime-neutral option, runtimes
 whose workflow does not fit are removed individually instead of excluding an
@@ -114,6 +117,7 @@ npm run smoke:deploy -- https://your-deployment.example
 It checks a server-rendered GET and JSON API shortlists for Ollama, LM Studio,
 llama.cpp, and MLX. It reports stale catalogue status and fails on unavailable,
 malformed, or empty format-compatible results. Submitted configurations are request-only.
+Each smoke-check request has a 60-second deadline.
 
 For project internals, development checks, and architecture details, see [codewiki.md](codewiki.md).
 For a repeatable demo handoff, see [the showcase checklist](docs/showcase-checklist.md).
