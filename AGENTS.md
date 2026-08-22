@@ -11,30 +11,49 @@ chat and coding models for a selected Apple Silicon Mac configuration.
 - The `POST /api/recommendations` endpoint must remain behaviorally consistent
   with the form flow.
 
-## Stack and commands
+## Stack
 
 - Node.js 24.x; use npm.
 - Next.js App Router, React, TypeScript (strict), and plain CSS in
   `app/globals.css`.
-- Run before handing off relevant changes:
+
+## Verification
+
+- During development, run the focused suite for the area changed.
+- Before handing off changes, run:
 
   ```bash
-  npm test
-  npm run lint
-  npm run build
+  npm run verify
   ```
+
+- `npm run verify` runs lint, unit tests, a production build, and the
+  accessibility suite.
+- UI or request-flow changes must include the accessibility suite.
+- If a required check cannot run, report exactly which check failed to run and
+  why.
 
 ## Architecture
 
-- `app/page.tsx`: server-rendered finder UI and GET-query handling.
-- `app/api/recommendations/route.ts`: JSON API; return `400` for invalid input
-  and `503` when the catalogue cannot be obtained.
-- `lib/recommendations.ts`: pure domain logic for supported Mac configurations,
-  memory estimates, runtime eligibility, ranking, and installation guidance.
-- `lib/catalogue.ts`: Hugging Face retrieval and normalization.
-- `lib/catalogue-cache.ts`: cache freshness and stale-fallback behavior.
-- `tests/recommendations.test.ts`: Node built-in test coverage for domain logic
-  and cache behavior.
+- `app/page.tsx`: server-rendered GET flow and page composition.
+- `app/api/recommendations/route.ts`: thin JSON API adapter; return `400` for
+  invalid input and `503` when the catalogue cannot be obtained.
+- `lib/hardware.ts`: chip profiles, configuration types, and shared validation.
+- `lib/request.ts`: GET-query parsing.
+- `lib/recommendation-request.ts`: bounded POST parsing and API error mapping.
+- `lib/recommendation-service.ts`: shared catalogue-to-ranking orchestration
+  used by GET and POST.
+- `lib/recommendations.ts`: pure eligibility, memory and disk estimates,
+  ranking, and installation guidance.
+- `lib/catalogue.ts`: Hugging Face retrieval and normalization facade.
+- `lib/catalogue-request.ts`: upstream timeouts, response-size limits, and
+  concurrency helpers.
+- `lib/catalogue-cache.ts`: cache freshness, request coalescing, retry behavior,
+  and stale fallback.
+- `tests/recommendations.test.ts`: domain, ranking, cache, and API-status tests.
+- `tests/request.test.ts`: GET parsing and GET/POST validation-parity tests.
+- `tests/catalogue.test.ts`: upstream-boundary and normalization tests.
+- `tests/accessibility.test.ts`: Playwright and axe coverage for keyboard use,
+  validation, responsive behavior, and operation without JavaScript.
 
 ## Behavioral requirements
 
@@ -60,17 +79,36 @@ chat and coding models for a selected Apple Silicon Mac configuration.
   model warnings.
 - Support GGUF recommendations for Ollama, LM Studio, and llama.cpp, and MLX
   recommendations for MLX.
+- GET and POST must use `validateConfig` and `getRecommendations`; do not
+  independently reimplement validation, catalogue handling, or ranking at
+  either request boundary.
+- Preserve equivalent successful recommendation data and validation behavior
+  across GET and POST. Transport-specific response shapes and status codes may
+  differ as documented.
+- Treat all Hugging Face metadata, filenames, URLs, and response bodies as
+  untrusted input.
+- Preserve request timeouts, request and response size bounds, bounded
+  concurrency, safe path validation, and shell-safe installation guidance.
+- Installation commands must identify exact normalized artifacts; never turn
+  arbitrary catalogue data into an unvalidated shell command.
 
 ## Change guidance
 
 - Add or update focused tests whenever changing validation, ranking, memory
   estimates, cache behavior, normalization, or API error handling.
-- Keep `codewiki.md` in sync with the repository whenever its architecture,
-  request/data flows, behavioral contracts, commands, or file layout change.
+- Update `codewiki.md` in the same change when modifying module ownership or
+  file layout; GET or POST request/data flows; validation, caching, ranking, or
+  normalization contracts; supported runtimes, formats, or installation flows;
+  or build, test, deployment, or operational commands.
+- Pure presentation or copy changes do not require a repository-map update
+  unless they change a documented accessibility or behavioral contract.
 - Avoid adding analytics, account integrations, databases, or environment
   variables unless the product requirement explicitly changes.
-- Keep UI changes accessible: semantic form controls, visible keyboard focus,
-  readable errors, and responsive layouts.
+- For form, component, or CSS changes, preserve keyboard operation, visible
+  focus, linked and focusable validation summaries, operation without
+  JavaScript, semantic native controls where practical, and usable layouts from
+  320 CSS pixels upward. Update focused accessibility tests when changing these
+  behaviors.
 - Prefer small, typed changes; do not weaken TypeScript or lint rules to bypass
   an issue.
 
