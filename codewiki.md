@@ -152,8 +152,10 @@ to the nearest supported value when the chip changes.
 `sizeGb` is display-only. Hugging Face responses are untrusted runtime input:
 models without a valid ID are discarded, malformed optional nested metadata is
 omitted, and malformed files are discarded before `Artifact` values are
-created. Normalization excludes unknown, non-integer, and smaller-than-100 MB
-artifacts.
+created. Repository IDs must use exactly one owner/name separator, fit Hugging
+Face's 96-character bound, use only its supported identifier characters, and
+exclude forbidden edge, repeated punctuation, and `.git` suffixes.
+Normalization excludes unknown, non-integer, and smaller-than-100 MB artifacts.
 
 - GGUF: retain every valid, standalone Hugging Face `.gguf` file as a separate
   quantization variant (Q2–Q8, IQ variants, and F16/BF16/F32 labels when
@@ -213,7 +215,9 @@ artifacts.
   format-compatible artifacts and gives each card one exact-file setup command.
   Context surcharges remain additive even for large artifacts, so changing from
   Small to Normal to Long always changes the estimate. Parameter metadata is
-  ignored when it is implausibly large for the exact artifact size. A model is
+  ignored when it is implausibly large for the exact artifact size and declared
+  quantization or precision; unknown precision uses a conservative Q2 storage
+  floor. A model is
   omitted when the estimate exceeds unified memory. Recommendations
   warn when estimated unified-memory headroom is below 2 GB; eligibility itself
   remains unchanged. Known model context limits below the selected 4K, 16K, or
@@ -227,10 +231,11 @@ artifacts.
   with `hf auth login`; gated MLX guidance uses `uvx hf auth login`. Both download
   the exact artifact or repository snapshot at the immutable Hugging Face revision
   when available, then run the runtime-specific local import command.
-- When Hugging Face supplies a repository revision, it is retained in normalized
-  artifact metadata. Exact GGUF file links and MLX repository links use that
-  revision rather than a moving branch; links fall back to `main` or the
-  repository root when it is unavailable. Available
+- Production detail metadata must include a canonical 40-character Hugging Face
+  commit hash. It is retained in normalized artifact metadata, and exact GGUF
+  file links and MLX repository links use that immutable revision rather than a
+  moving branch. The lower-level normalizer still omits malformed or absent
+  optional revisions when used independently. Available
   licence metadata is shown alongside gated-model notes.
 
 The ranking score combines parameter metadata when available, workload fit, a
@@ -297,7 +302,8 @@ refresh latency unbounded.
 Because those list responses contain filenames but not reliable byte sizes, it
 then obtains each selected repository's `blobs=true` metadata with a bounded
 global concurrency of six in-flight requests across both formats. Each upstream response is capped at 8 MiB; normalized identifiers, paths, tags, and metadata strings have field and cardinality limits; one repository can retain at most 1 MiB of normalized text metadata; and a complete refresh can retain at most 8 MiB. Each repository is also capped at 20,000 metadata files before normalization. A repository that disappears or
-fails during that second step is excluded; its unverified files are never
+fails during that second step, or does not return a canonical commit hash, is
+excluded; its unverified files are never
 recommended. The detail response also supplies optional model configuration and
 GGUF context metadata used to verify the selected context preset. If more than half of detail requests fail overall, more than half
 fail within either format, or no verified repository remains for a format, the
@@ -391,8 +397,10 @@ without external network access. Production code has no fixture switch or
 catalogue environment variable. The browser checks report initial/hardware,
 results/recovery, responsive/theme, and no-JavaScript scenarios separately.
 Server startup captures bounded diagnostics and retries with a new ephemeral
-port after an `EADDRINUSE` collision. Cleanup explicitly terminates and waits
-for the production server.
+port after an `EADDRINUSE` collision. Cleanup registers its exit observer before
+signalling the production server, waits for a bounded graceful shutdown, and
+falls back to a bounded `SIGKILL` wait so the accessibility suite cannot hang
+indefinitely on teardown.
 
 `npm run test:unit` uses Node's built-in experimental test coverage report for
 the exercised server and domain modules. It enforces whole-number gates of 98%

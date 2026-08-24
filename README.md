@@ -82,6 +82,11 @@ repository's `blobs=true` metadata before normalizing it. There are no
 non-Hugging-Face catalogue requests. MLX sizes represent the complete snapshot
 download and are rejected when any repository file has an unknown size; imports
 may also need temporary free disk space beyond the displayed download size.
+Repository IDs must match Hugging Face's bounded `owner/name` grammar, and each
+detail response must supply a canonical 40-character commit hash before its
+artifacts can enter the production catalogue. Parameter metadata is retained
+only when the exact artifact size is plausible for its declared quantization or
+precision, using a conservative Q2 floor when precision is unknown.
 Adapter-only LoRA, QLoRA, and PEFT repositories are not treated as runnable MLX
 base models. MLX snapshots must also contain every declared weight shard, a root
 model config, and self-contained tokenizer assets. Model-weight recognition is

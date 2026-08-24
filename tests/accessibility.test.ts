@@ -19,12 +19,31 @@ async function allocatePort() {
 }
 
 const fetchMockImport = pathToFileURL("tests/browser-catalogue-fetch-mock.mjs").href;
+const serverStopTimeoutMs = 5_000;
 let origin = "";
+
+async function waitForExit(exit: Promise<unknown>, timeoutMs: number) {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      exit.then(() => true),
+      new Promise<false>((resolve) => { timeout = setTimeout(() => resolve(false), timeoutMs); }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
 
 async function stopServer(server: ChildProcessWithoutNullStreams) {
   if (server.exitCode !== null) return;
+  // Register before signalling so a fast exit cannot be missed between kill()
+  // and listener attachment.
+  const exit = once(server, "exit");
+  if (server.exitCode !== null) return;
   server.kill("SIGTERM");
-  await once(server, "exit");
+  if (await waitForExit(exit, serverStopTimeoutMs)) return;
+  if (server.exitCode === null) server.kill("SIGKILL");
+  if (!await waitForExit(exit, serverStopTimeoutMs)) throw new Error("The local Next.js server did not stop after SIGKILL.");
 }
 
 async function startServer() {
@@ -217,9 +236,9 @@ try {
   assert.equal(await initial.locator(".card.top-pick").count(), 1, "the first ranked result is visually marked as the top pick");
   assert.equal(await initial.locator(".card").first().locator(".top-pick-label").textContent(), "Top pick");
   assert.equal(await initial.getByRole("link", { name: "Open Ollama model source: open llama-3.2-3b.Q4_K_M.gguf on Hugging Face in a new tab" }).count(), 1, "top recommendation has a clearly labelled model-source action");
-  assert.match(await initial.getByRole("link", { name: "Open Ollama model source: open llama-3.2-3b.Q4_K_M.gguf on Hugging Face in a new tab" }).getAttribute("href") ?? "", /\/blob\/main\//, "source action opens the Hugging Face viewer rather than the download route");
+  assert.match(await initial.getByRole("link", { name: "Open Ollama model source: open llama-3.2-3b.Q4_K_M.gguf on Hugging Face in a new tab" }).getAttribute("href") ?? "", /\/blob\/[a-f0-9]{40}\//, "source action opens the immutable Hugging Face viewer rather than the download route");
   assert.equal(await initial.getByText("How these results work", { exact: true }).count(), 1, "catalogue caveats are available in a collapsed disclosure");
-  assert.equal(await initial.locator(".card.top-pick a[href*='/blob/main/']").count(), 1, "the top recommendation has one non-duplicated model-source link");
+  assert.equal(await initial.locator(`.card.top-pick a[href*='/blob/${"1".repeat(40)}/']`).count(), 1, "the top recommendation has one non-duplicated model-source link");
   await assertUnchangedBox(initial, ".card.top-pick", () => initial.locator(".card.top-pick").hover(), "hovering a recommendation card");
   await assertCardDisclosure(initial, "Installation guidance");
   await initial.locator(".card").first().getByText("Installation guidance", { exact: true }).click();

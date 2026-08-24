@@ -7,7 +7,7 @@ import { fetchJson, mapWithConcurrency, type FetchLike, REFRESH_TIMEOUT_MS, REQU
 const MIN_ARTIFACT_BYTES = 100_000_000;
 const MAX_FILES_PER_REPOSITORY = 20_000;
 const MAX_GGUF_ARTIFACTS_PER_REPOSITORY = 64;
-const MAX_MODEL_ID_CHARS = 256;
+const MAX_MODEL_ID_CHARS = 96;
 const MAX_PATH_CHARS = 1_024;
 const MAX_METADATA_STRING_CHARS = 4_096;
 const MAX_TAGS_PER_REPOSITORY = 256;
@@ -134,9 +134,13 @@ const isSafeRelativePath = (value: string) => {
   return value.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
 };
 const isSafeModelId = (value: string) => {
-  if (!value || value.length > MAX_MODEL_ID_CHARS || hasUnsafeControlCharacter(value) || /[\s?#%\\]/.test(value) || value.startsWith("-")) return false;
+  if (!value || value.length > MAX_MODEL_ID_CHARS || hasUnsafeControlCharacter(value)) return false;
   const segments = value.split("/");
-  return segments.length === 2 && segments.every((segment) => segment.length > 0 && segment !== "." && segment !== ".." && !segment.startsWith("-"));
+  return segments.length === 2 && segments.every((segment) => /^[a-zA-Z0-9._-]+$/.test(segment)
+    && !/^[.-]|[.-]$/.test(segment)
+    && !segment.includes("--")
+    && !segment.includes(".."))
+    && !/\.git$/i.test(value);
 };
 
 function asFiniteNumber(value: unknown): number | undefined {
@@ -213,7 +217,8 @@ export function normalizeHubModel(value: unknown): HubModel | undefined {
   if (!model) return undefined;
   const id = asString(model.id);
   if (!id || !isSafeModelId(id)) return undefined;
-  const sha = asBoundedString(model.sha, 256)?.trim() || undefined;
+  const shaCandidate = asBoundedString(model.sha, 40)?.trim();
+  const sha = shaCandidate && /^[a-f0-9]{40}$/i.test(shaCandidate) ? shaCandidate.toLowerCase() : undefined;
   const downloads = asFiniteNumber(model.downloads);
   const lastModified = asBoundedString(model.lastModified);
   const gated = typeof model.gated === "boolean" ? model.gated : asBoundedString(model.gated);
@@ -290,14 +295,22 @@ function quantizationOf(filename: string) {
   return match?.[1]?.toUpperCase();
 }
 
-function plausibleParamsB(value: unknown, sizeBytes: number): number | undefined {
+function minimumBytesPerB(quantization: string | undefined) {
+  const normalized = quantization?.toUpperCase();
+  const quantized = normalized?.match(/^(?:I?Q)([2-8])/);
+  const bits = quantized ? Number(quantized[1]) : normalized === "F32" ? 32 : normalized === "F16" || normalized === "BF16" ? 16 : 2;
+  // Allow 20% tolerance for format and metadata variation while retaining a
+  // physically plausible lower bound for the declared storage precision.
+  return bits * 1_000_000_000 / 8 * 0.8;
+}
+
+function plausibleParamsB(value: unknown, sizeBytes: number, quantization?: string): number | undefined {
   const candidate = params(value);
   if (candidate === undefined) return undefined;
-  // A model cannot plausibly encode arbitrarily many parameters in a tiny
-  // artifact. This deliberately broad lower-bound check only uses metadata as
-  // a ranking signal when the file is at least 50 MB per reported billion
-  // parameters; otherwise the metadata is treated as unavailable.
-  return candidate <= Math.max(1, sizeBytes / 50_000_000) ? candidate : undefined;
+  // Only use parameter metadata as a ranking signal when the artifact can
+  // plausibly hold that many parameters at its declared GGUF precision. MLX
+  // snapshots and unlabeled GGUF files use the conservative Q2-compatible floor.
+  return candidate <= Math.max(1, sizeBytes / minimumBytesPerB(quantization)) ? candidate : undefined;
 }
 
 function modelParamCandidates(model: HubModel): unknown[] {
@@ -338,6 +351,7 @@ export function normalizeModels(models: HubModel[], format: Artifact["format"]):
       const artifactSize = format === "gguf" ? selected!.size : sizeBytes;
       if (!validSize(artifactSize)) return [];
       const filename = selected?.rfilename;
+      const quantization = filename ? quantizationOf(filename) : undefined;
       return [{
         id: filename ? `${model.id}/${filename}` : model.id,
         modelId: model.id,
@@ -346,9 +360,9 @@ export function normalizeModels(models: HubModel[], format: Artifact["format"]):
         sizeBytes: artifactSize,
         sizeGb: Math.round((artifactSize / 1e9) * 10) / 10,
         paramsB: modelParamCandidates(model)
-          .map((candidate) => plausibleParamsB(candidate, artifactSize))
+          .map((candidate) => plausibleParamsB(candidate, artifactSize, quantization))
           .find((candidate): candidate is number => candidate !== undefined),
-        quantization: filename ? quantizationOf(filename) : undefined,
+        quantization,
         downloads: model.downloads !== undefined && model.downloads >= 0 ? model.downloads : 0,
         updatedAt: typeof model.lastModified === "string" ? model.lastModified : new Date(0).toISOString(),
         licence: model.cardData?.license,
@@ -413,7 +427,8 @@ export function interleaveUnique(lists: HubModel[][], limit: number): HubModel[]
 
 async function retrieveModelMetadata(model: HubModel, fetcher: FetchLike, refreshSignal: AbortSignal, requestTimeoutMs: number): Promise<HubModel | undefined> {
   try {
-    return normalizeHubModel(await fetchJson(modelInfoUrl(model.id), fetcher, refreshSignal, "Hugging Face", requestTimeoutMs));
+    const detailed = normalizeHubModel(await fetchJson(modelInfoUrl(model.id), fetcher, refreshSignal, "Hugging Face", requestTimeoutMs));
+    return detailed?.sha ? detailed : undefined;
   } catch (error) {
     // The overall refresh deadline invalidates the entire sample. A request
     // timeout or ordinary repository failure remains isolated to that one repo.
