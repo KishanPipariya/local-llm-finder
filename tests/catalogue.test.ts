@@ -123,6 +123,22 @@ test("MLX repositories without weights are classified as unsupported artifacts",
   assert.deepEqual(normalizationExclusions([model], "mlx"), { unsupportedArtifact: 1 });
 });
 
+test("MLX repositories cannot use non-model safetensors as a complete weight set", () => {
+  for (const rfilename of ["tokenizer.safetensors", "optimizer.safetensors", "training/state.safetensors"]) {
+    const model = {
+      id: "mlx-community/Non-Model-Safetensors",
+      pipeline_tag: "text-generation",
+      siblings: [
+        { rfilename, size: 200_000_000 },
+        { rfilename: "config.json", size: 1_000 },
+        { rfilename: "tokenizer.json", size: 1_000 },
+      ],
+    };
+    assert.deepEqual(normalizeModels([model], "mlx"), [], `${rfilename} is not a model weight file`);
+    assert.deepEqual(normalizationExclusions([model], "mlx"), { unsupportedArtifact: 1 });
+  }
+});
+
 test("MLX adapter-only repositories are not treated as runnable model snapshots", () => {
   const adapter = {
     id: "mlx-community/Example-LoRA",

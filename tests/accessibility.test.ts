@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:net";
+import test from "node:test";
 import { pathToFileURL } from "node:url";
 import AxeBuilder from "@axe-core/playwright";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
@@ -17,8 +18,41 @@ async function allocatePort() {
   return address.port;
 }
 
-const port = await allocatePort();
-const origin = `http://127.0.0.1:${port}`;
+const fetchMockImport = pathToFileURL("tests/browser-catalogue-fetch-mock.mjs").href;
+let origin = "";
+
+async function stopServer(server: ChildProcessWithoutNullStreams) {
+  if (server.exitCode !== null) return;
+  server.kill("SIGTERM");
+  await once(server, "exit");
+}
+
+async function startServer() {
+  const attempts = 3;
+  let lastOutput = "";
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const port = await allocatePort();
+    const candidateOrigin = `http://127.0.0.1:${port}`;
+    const server = spawn(process.execPath, ["--import", fetchMockImport, "node_modules/next/dist/bin/next", "start", "--port", String(port)], { stdio: ["ignore", "pipe", "pipe"], env: process.env });
+    let output = "";
+    const collect = (chunk: Buffer) => { output = `${output}${chunk}`.slice(-16_384); };
+    server.stdout.on("data", collect);
+    server.stderr.on("data", collect);
+
+    for (let probe = 0; probe < 40 && server.exitCode === null; probe += 1) {
+      try {
+        const response = await fetch(candidateOrigin, { signal: AbortSignal.timeout(1_000) });
+        if (response.ok) return { origin: candidateOrigin, server };
+      } catch { /* Retry while the server starts. */ }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+
+    lastOutput = output;
+    await stopServer(server);
+    if (!/EADDRINUSE/.test(output) || attempt === attempts) break;
+  }
+  throw new Error(`The local Next.js server did not start.${lastOutput ? `\n${lastOutput}` : ""}`);
+}
 
 async function waitForPage(context: BrowserContext): Promise<Page> {
   const page = await context.newPage();
@@ -79,14 +113,17 @@ async function assertPhoneLayout(page: Page, state: string) {
   }
 }
 
-const fetchMockImport = pathToFileURL("tests/browser-catalogue-fetch-mock.mjs").href;
-const server = spawn(process.execPath, ["--import", fetchMockImport, "node_modules/next/dist/bin/next", "start", "--port", String(port)], { stdio: "ignore", env: process.env });
+const started = await startServer();
+origin = started.origin;
+const server = started.server;
 let browser: Browser | undefined;
 
 try {
   browser = await chromium.launch();
-  const context = await browser.newContext();
-  const initial = await waitForPage(context);
+  await test("initial finder and hardware interactions are accessible", async () => {
+    const context = await browser!.newContext();
+    try {
+      const initial = await waitForPage(context);
   await assertNoAxeViolations(initial, "initial finder");
   assert.equal(await initial.getByText("Ollama is the recommended default.", { exact: false }).count(), 1, "runtime helper gives beginners a recommended starting point");
   assert.deepEqual(await initial.locator('input[name="runtime"]').evaluateAll((inputs) => inputs.map((input) => input.getAttribute("value"))), ["ollama", "lmStudio", "mlx", "llamaCpp", "any"], "runtime choices put the beginner recommendation first and expose the neutral option");
@@ -125,7 +162,6 @@ try {
   await firstPreset.focus();
   assert.equal(await initial.locator(":focus").evaluate((element) => element.tagName), "A", "preset retains keyboard-accessible link semantics");
   await initial.goto(origin, { waitUntil: "networkidle" });
-  const lightSurface = await initial.locator("body").evaluate((body) => getComputedStyle(body).backgroundColor);
   await initial.keyboard.press("Tab");
   assert.equal(await initial.locator(":focus").textContent(), "Skip to the model finder");
   const button = initial.getByRole("button", { name: "Find models for M4 · 16 GB" });
@@ -165,8 +201,16 @@ try {
   await initial.locator("#memoryGb").selectOption("48");
   await initial.locator("#chip").selectOption("m5Pro");
   assert.equal(await initial.locator("#memoryGb").inputValue(), "48", "shared memory remains selected");
+    } finally {
+      await context.close();
+    }
+  });
 
-  await initial.goto(`${origin}/?chip=m4&memoryGb=16&diskGb=12&workload=chat`, { waitUntil: "networkidle" });
+  await test("results, installation disclosures, and recovery are accessible", async () => {
+    const context = await browser!.newContext();
+    try {
+      const initial = await waitForPage(context);
+      await initial.goto(`${origin}/?chip=m4&memoryGb=16&diskGb=12&workload=chat`, { waitUntil: "networkidle" });
   assert.equal(await initial.locator(".setup-summary").count(), 1, "results include a compact setup summary");
   assert.match(await initial.locator(".setup-summary").textContent() ?? "", /M4[\s\S]*16 GB unified memory[\s\S]*12 GB free disk/, "setup summary retains the submitted Mac details");
   assert.equal(await initial.getByRole("link", { name: "Edit profile" }).getAttribute("href"), "/?chip=m4&memoryGb=16&diskGb=12&workload=chat&runtime=any&context=normal#finder", "edit profile preserves the runtime-neutral configuration in its GET URL");
@@ -188,9 +232,19 @@ try {
   await initial.goto(`${origin}/?chip=m4&memoryGb=16&diskGb=1&workload=chat`, { waitUntil: "networkidle" });
   assert.equal(await initial.locator(".no-results").count(), 1, "no-result profiles include a recovery panel");
   assert.equal(await initial.getByRole("link", { name: "Edit this profile to try again" }).count(), 1, "no-result recovery keeps a no-JavaScript edit path");
+    } finally {
+      await context.close();
+    }
+  });
 
-  const narrowContext = await browser.newContext({ viewport: { width: 320, height: 720 } });
-  const narrowInitial = await waitForPage(narrowContext);
+  await test("responsive validation and dark themes are accessible", async () => {
+    const narrowContext = await browser!.newContext({ viewport: { width: 320, height: 720 } });
+    const phoneContext = await browser!.newContext({ viewport: { width: 375, height: 812 } });
+    const darkContext = await browser!.newContext({ colorScheme: "dark" });
+    const narrowDarkContext = await browser!.newContext({ colorScheme: "dark", viewport: { width: 320, height: 720 } });
+    try {
+      const narrowInitial = await waitForPage(narrowContext);
+      const lightSurface = await narrowInitial.locator("body").evaluate((body) => getComputedStyle(body).backgroundColor);
   await assertNoAxeViolations(narrowInitial, "320px initial finder");
   await assertPhoneLayout(narrowInitial, "320px initial finder");
   const invalid = await narrowContext.newPage();
@@ -219,7 +273,6 @@ try {
   await partial.goto(`${origin}/?chip=m4`, { waitUntil: "networkidle" });
   assert.deepEqual(await partial.locator(".field-error").allTextContents(), ["Choose a memory configuration supported by that chip.", "Free disk space must be between 1 and 4,000 GB.", "Choose a workload."], "partial GET uses the same required fields as the API");
 
-  const phoneContext = await browser.newContext({ viewport: { width: 375, height: 812 } });
   const phoneInitial = await waitForPage(phoneContext);
   await assertNoAxeViolations(phoneInitial, "375px initial finder");
   await assertPhoneLayout(phoneInitial, "375px initial finder");
@@ -232,22 +285,26 @@ try {
   await assertNoAxeViolations(phoneResults, "375px populated results");
   await assertPhoneLayout(phoneResults, "375px populated results");
 
-  const darkContext = await browser.newContext({ colorScheme: "dark" });
   const dark = await waitForPage(darkContext);
   await assertNoAxeViolations(dark, "dark-theme finder");
   assert.notEqual(await dark.locator("body").evaluate((body) => getComputedStyle(body).backgroundColor), lightSurface, "dark theme uses a distinct page surface");
   await dark.keyboard.press("Tab");
   assert.notEqual(await dark.locator(":focus").evaluate((element) => getComputedStyle(element).outlineStyle), "none", "dark theme keeps a visible keyboard focus treatment");
 
-  const narrowDarkContext = await browser.newContext({ colorScheme: "dark", viewport: { width: 320, height: 720 } });
   const darkInvalid = await narrowDarkContext.newPage();
   await darkInvalid.goto(`${origin}/?chip=m4Pro&memoryGb=16&diskGb=0&workload=nope`, { waitUntil: "networkidle" });
   await assertNoAxeViolations(darkInvalid, "dark-theme server-rendered invalid form");
   assert.equal(await darkInvalid.locator(".error-summary").count(), 1, "dark theme retains the visible error summary");
   assert.equal(await darkInvalid.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "dark theme reflows without horizontal scrolling at 320px");
+    } finally {
+      await Promise.all([narrowDarkContext.close(), darkContext.close(), phoneContext.close(), narrowContext.close()]);
+    }
+  });
 
-  const noScriptContext = await browser.newContext({ javaScriptEnabled: false });
-  const noScript = await noScriptContext.newPage();
+  await test("the complete recommendation flow works without JavaScript", async () => {
+    const noScriptContext = await browser!.newContext({ javaScriptEnabled: false });
+    try {
+      const noScript = await noScriptContext.newPage();
   await noScript.goto(origin, { waitUntil: "domcontentloaded" });
   await noScript.locator("#chip").selectOption("m4");
   await noScript.locator("#memoryGb").selectOption("16");
@@ -270,16 +327,11 @@ try {
   await noScript.waitForURL(/chip=m3Pro/);
   assert.match(noScript.url(), /memoryGb=18/);
   assert.equal(await noScript.locator("#results").count(), 1, "non-default chip recommendations render server-side without JavaScript");
-  await noScriptContext.close();
-  await phoneContext.close();
-  await narrowDarkContext.close();
-  await darkContext.close();
-  await narrowContext.close();
-  await context.close();
+    } finally {
+      await noScriptContext.close();
+    }
+  });
 } finally {
   await browser?.close();
-  if (server.exitCode === null) {
-    server.kill("SIGTERM");
-    await once(server, "exit");
-  }
+  await stopServer(server);
 }

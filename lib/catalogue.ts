@@ -51,7 +51,12 @@ function params(value: unknown): number | undefined {
 const titleOf = (id: string) => id.split("/").at(-1)?.replace(/-(GGUF|MLX)$/i, "") ?? id;
 const validSize = (size: unknown): size is number => typeof size === "number" && Number.isSafeInteger(size) && size >= MIN_ARTIFACT_BYTES;
 const knownFileSize = (size: unknown): size is number => typeof size === "number" && Number.isSafeInteger(size) && size > 0;
-const isMlxWeightFile = (file: HubFile) => /(?:^|\/)[^/]+\.safetensors$/i.test(file.rfilename);
+// Complete MLX model snapshots conventionally publish model, weights, or
+// consolidated safetensors (optionally sharded). Do not let an arbitrary
+// safetensors asset such as tokenizer or optimizer state stand in for model
+// weights when deciding that a repository is runnable.
+const mlxWeightFilename = /(?:^|\/)(?:model|weights?|consolidated)(?:-\d+-of-\d+)?\.safetensors$/i;
+const isMlxWeightFile = (file: HubFile) => mlxWeightFilename.test(file.rfilename);
 const mlxAdapterSignal = /(?:^|[^a-z0-9])(?:adapter|lora|qlora|peft)(?:$|[^a-z0-9])/i;
 const isMlxAdapterRepository = (model: HubModel, files: HubFile[]) => mlxAdapterSignal.test([
   model.id,

@@ -84,7 +84,9 @@ download and are rejected when any repository file has an unknown size; imports
 may also need temporary free disk space beyond the displayed download size.
 Adapter-only LoRA, QLoRA, and PEFT repositories are not treated as runnable MLX
 base models. MLX snapshots must also contain every declared weight shard, a root
-model config, and self-contained tokenizer assets. Normalized metadata has per-field, per-repository, and whole-refresh
+model config, and self-contained tokenizer assets. Model-weight recognition is
+limited to standard model, weights, or consolidated safetensors names so
+tokenizer and training-state files cannot satisfy the snapshot check. Normalized metadata has per-field, per-repository, and whole-refresh
 size limits in addition to the upstream response-size bound. GGUF
 results that can fit Ollama reserve a larger operational disk estimate for the
 download and temporary import copy. With the runtime-neutral option, runtimes

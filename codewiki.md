@@ -181,7 +181,8 @@ artifacts.
   points to the human-facing Hugging Face file or repository viewer. Model
   context metadata is normalized to
   `maxContextTokens` when available.
-- MLX: require one complete `.safetensors` weight set, a root `config.json`,
+- MLX: require one complete `.safetensors` weight set using standard `model`,
+  `weights`, or `consolidated` filenames, a root `config.json`,
   self-contained tokenizer data (`tokenizer.json`, a supported tokenizer model,
   or the `vocab.json`/`merges.txt` pair), and an explicit supported pipeline or
   text/chat/coding task signal, then sum every
@@ -190,7 +191,8 @@ artifacts.
   incomplete or internally inconsistent shard groups are unsupported artifacts.
   Adapter-only, LoRA, QLoRA, and PEFT repositories are classified as unsupported
   artifacts even when they contain a `.safetensors` file, because MLX-LM needs a
-  complete, self-contained base-model snapshot.
+  complete, self-contained base-model snapshot. Tokenizer, optimizer, training
+  state, and other arbitrarily named safetensors do not count as model weights.
   Any unknown, non-integer, or non-positive included file size excludes the
   artifact, and the aggregate must meet the 100 MB minimum. This keeps snapshot
   download estimates conservative. Its guidance uses `uvx hf` to keep the
@@ -386,8 +388,11 @@ production Next.js server. That child process imports a test-only Node fetch
 mock that returns Hugging Face list and per-repository blob-metadata responses,
 so browser checks exercise the production retrieval and normalization path
 without external network access. Production code has no fixture switch or
-catalogue environment variable. Cleanup explicitly terminates and waits for the
-production server.
+catalogue environment variable. The browser checks report initial/hardware,
+results/recovery, responsive/theme, and no-JavaScript scenarios separately.
+Server startup captures bounded diagnostics and retries with a new ephemeral
+port after an `EADDRINUSE` collision. Cleanup explicitly terminates and waits
+for the production server.
 
 `npm run test:unit` uses Node's built-in experimental test coverage report for
 the exercised server and domain modules. It enforces whole-number gates of 98%
