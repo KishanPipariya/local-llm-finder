@@ -77,7 +77,7 @@ export function FinderForm({ config, submitted, fieldErrors, catalogueError }: {
         <div className="fields">
           <HardwareSelector chip={chip} submittedChip={submittedChip} memoryGb={memoryGb} fieldErrors={visibleFieldErrors} status={hardwareStatus} onChange={handleHardwareChange}/>
           <label htmlFor="diskGb">Available storage (GB)
-            <input id="diskGb" name="diskGb" required min="1" max="4000" type="number" value={diskGb} onChange={(event) => { clearFieldErrors("diskGb"); setDiskGb(event.target.value); }} aria-invalid={Boolean(visibleFieldErrors.diskGb)} aria-describedby={visibleFieldErrors.diskGb ? "disk-error" : "disk-help"}/>
+            <input id="diskGb" name="diskGb" required min="1" max="4000" step="any" type="number" value={diskGb} onChange={(event) => { clearFieldErrors("diskGb"); setDiskGb(event.target.value); }} aria-invalid={Boolean(visibleFieldErrors.diskGb)} aria-describedby={visibleFieldErrors.diskGb ? "disk-error" : "disk-help"}/>
             <small id="disk-help">Space free now for a model download—not total disk capacity.</small>
             {visibleFieldErrors.diskGb && <span className="field-error" id="disk-error">{visibleFieldErrors.diskGb}</span>}
           </label>

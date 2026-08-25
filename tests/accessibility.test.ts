@@ -327,12 +327,14 @@ try {
   await noScript.goto(origin, { waitUntil: "domcontentloaded" });
   await noScript.locator("#chip").selectOption("m4");
   await noScript.locator("#memoryGb").selectOption("16");
-  await noScript.locator("#diskGb").fill("12");
+  await noScript.locator("#diskGb").fill("12.5");
+  assert.equal(await noScript.locator("#diskGb").evaluate((input: HTMLInputElement) => input.checkValidity()), true, "fractional free storage is valid in the native form");
   await Promise.all([
-    noScript.waitForURL(/memoryGb=16/),
+    noScript.waitForURL(/diskGb=12%2E5|diskGb=12\.5/),
     noScript.getByRole("button", { name: "Find models for M4 · 16 GB" }).click({ force: true }),
   ]);
   assert.match(noScript.url(), /chip=m4/);
+  assert.equal(new URL(noScript.url()).searchParams.get("diskGb"), "12.5", "fractional free storage survives the no-JavaScript GET flow");
   assert.equal(await noScript.locator(".error-summary").count(), 0);
   assert.equal(await noScript.locator("#results").count(), 1, "fixture-backed recommendations render server-side without JavaScript");
   assert.ok(await noScript.locator(".card").count());

@@ -145,6 +145,9 @@ configurations, including incomplete submitted configurations. GET memory and
 disk values use the browser number control's unsigned decimal/exponent syntax;
 hexadecimal, padded, leading-plus, and incomplete-decimal representations are
 rejected instead of being accepted through broad JavaScript numeric coercion.
+The native GET form uses an unrestricted numeric step so fractional free-space
+values accepted by shared validation, such as `12.5`, remain directly
+submittable with or without JavaScript.
 
 The hardware selector server-renders the union of all memory sizes so a person
 can choose a valid chip/memory pair even with JavaScript disabled. After
@@ -269,6 +272,9 @@ tolerance still applies when the other MLX feed is valid.
 The ranking score combines parameter metadata when available, workload fit, a
 qualitative pace factor, a small bounded update-recency signal, and download
 popularity. Download footprint is never treated as a parameter-count proxy.
+Workload metadata is scanned once and the numeric score is computed once for
+each eligible artifact before sorting, so comparator work stays constant-time
+even at the bounded catalogue and metadata-cardinality limits.
 It keeps the highest-ranked representative of each exact artifact/format
 variant, preserving distinct fine-tunes that declare the same base model and
 distinct GGUF files in one repository even when they share a quantization label.

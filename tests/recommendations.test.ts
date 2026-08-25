@@ -117,6 +117,26 @@ test("uses Hugging Face task metadata as a bounded workload preference", () => {
   assert.equal(rankArtifacts([unknown, coding, chat], { ...mac, workload: "chat" }, Date.parse("2026-08-06T00:00:00Z"))[0].id, chat.id);
   assert.equal(rankArtifacts([unknown], mac, Date.parse("2026-08-06T00:00:00Z")).length, 1, "manually supplied artifacts without task metadata remain neutral");
 });
+test("scans workload metadata once per eligible artifact before sorting", () => {
+  let scans = 0;
+  const observedTags = ["neutral"];
+  observedTags.join = (separator?: string) => {
+    scans += 1;
+    return Array.prototype.join.call(["neutral"], separator);
+  };
+  const artifacts = ["Charlie", "Alpha", "Bravo"].map((title) => ({
+    ...gguf,
+    id: `org/${title}-GGUF/model.Q4_K_M.gguf`,
+    modelId: `org/${title}-GGUF`,
+    title,
+    tags: observedTags,
+    downloads: 1,
+  }));
+
+  rankArtifacts(artifacts, { ...mac, workload: "balanced" }, Date.parse("2026-08-06T00:00:00Z"));
+
+  assert.equal(scans, artifacts.length);
+});
 test("does not treat generic text generation as chat suitability", () => {
   const coding = { ...gguf, id: "org/Coder-GGUF/file.gguf", modelId: "org/Coder-GGUF", title: "Coder", tags: ["code"], pipelineTag: "text-generation" };
   const chat = { ...gguf, id: "org/Assistant-GGUF/file.gguf", modelId: "org/Assistant-GGUF", title: "Assistant", tags: [], pipelineTag: "text-generation" };

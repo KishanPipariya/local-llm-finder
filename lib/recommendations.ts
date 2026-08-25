@@ -108,8 +108,8 @@ export function expectedPace(profile: ChipProfile, estimatedMemoryGb: number): R
   return "Slow";
 }
 
-function modelScore(item: Artifact, config: MacConfig, memoryGb: number, now: number): number {
-  const work = taskRelevanceScore(item, config.workload);
+function modelScore(item: Artifact, config: MacConfig, memoryGb: number, category: WorkloadCategory, now: number): number {
+  const work = taskRelevanceScore(category, config.workload);
   // Artifact size is a quantization/download property, not a parameter count.
   // Do not turn missing parameter metadata into an unsupported capability claim.
   const capacity = item.paramsB ? Math.min(35, Math.log2(item.paramsB + 1) * 8) : 0;
@@ -130,19 +130,9 @@ function quantizationPreference(item: Artifact) {
   return 0;
 }
 
-function isCodingOriented(item: Artifact) {
-  return /(?:^|[^a-z])(?:code|coder|coding|programming)(?:$|[^a-z])/i.test(`${item.title} ${item.tags.join(" ")} ${item.pipelineTag ?? ""}`);
-}
-
-function isChatOriented(item: Artifact) {
-  return item.chatTemplate === true
-    || item.pipelineTag?.trim().toLowerCase() === "conversational"
-    || /(?:^|[^a-z])(?:instruct|chat|assistant|conversation)(?:$|[^a-z])/i.test(`${item.title} ${item.tags.join(" ")}`);
-}
-
-function taskRelevanceScore(item: Artifact, workload: MacConfig["workload"]) {
-  const coding = isCodingOriented(item);
-  const chat = isChatOriented(item);
+function taskRelevanceScore(category: WorkloadCategory, workload: MacConfig["workload"]) {
+  const coding = category === "coding-oriented" || category === "mixed";
+  const chat = category === "general chat" || category === "mixed";
   if (workload === "coding") return coding ? 36 : chat ? 8 : 0;
   if (workload === "chat") return chat ? 24 : coding ? 4 : 0;
   return coding && chat ? 20 : coding || chat ? 14 : 0;
@@ -156,8 +146,11 @@ function recencyScore(updatedAt: string, now: number) {
 }
 
 function workloadCategory(item: Artifact): WorkloadCategory {
-  const coding = isCodingOriented(item);
-  const chat = isChatOriented(item);
+  const metadata = `${item.title} ${item.tags.join(" ")}`;
+  const coding = /(?:^|[^a-z])(?:code|coder|coding|programming)(?:$|[^a-z])/i.test(`${metadata} ${item.pipelineTag ?? ""}`);
+  const chat = item.chatTemplate === true
+    || item.pipelineTag?.trim().toLowerCase() === "conversational"
+    || /(?:^|[^a-z])(?:instruct|chat|assistant|conversation)(?:$|[^a-z])/i.test(metadata);
   if (coding && chat) return "mixed";
   if (coding) return "coding-oriented";
   if (chat) return "general chat";
@@ -282,12 +275,13 @@ export function rankArtifactsWithExplanations(artifacts: Artifact[], config: Mac
     const performance: Recommendation["performance"] = slow ? "Likely slow" : tight ? "Tight memory" : "Comfortable";
     const pace = expectedPace(profile, memoryGb);
     const category = workloadCategory(item);
+    const relevance = workloadRelevance(category, config.workload);
     const diskHeadroom = Math.round((availableDiskBytes - requiredDiskBytes) / 1e6) * 1e6;
     const memoryHeadroom = Math.round((config.memoryGb - memoryGb) * 10) / 10;
     if (diskHeadroom / availableDiskBytes < 0.25) notes.push("Near disk limit: less than 25% reserve-adjusted disk headroom remains beyond the download/import estimate.");
     if (memoryHeadroom < 2) notes.push("Near memory limit: less than 2 GB of estimated unified-memory headroom remains.");
     const rankingFactors = [
-      workloadRelevance(category, config.workload),
+      relevance,
       item.paramsB ? `${item.paramsB}B parameter metadata contributes to capacity ranking.` : "Parameter metadata was unavailable, so download size is not treated as a capability signal.",
       item.maxContextTokens !== undefined ? `Catalogue metadata reports a maximum context of ${item.maxContextTokens.toLocaleString()} tokens.` : "Model context capacity was unavailable, so context fit is a memory estimate rather than a verified model limit.",
       item.quantization ? "Quantization precision receives a bounded preference among variants that fit; this is not a model-quality benchmark." : "No quantization metadata was available for a precision preference.",
@@ -302,7 +296,7 @@ export function rankArtifactsWithExplanations(artifacts: Artifact[], config: Mac
       performance,
       pace,
       notes,
-      why: `${item.paramsB ? `${item.paramsB}B parameters` : "A current compact model"}; ${workloadRelevance(category, config.workload)} It leaves ${memoryHeadroom.toFixed(1)} GB of estimated memory headroom at the ${contextLabels[context].toLowerCase()} context preset.`,
+      why: `${item.paramsB ? `${item.paramsB}B parameters` : "A current compact model"}; ${relevance} It leaves ${memoryHeadroom.toFixed(1)} GB of estimated memory headroom at the ${contextLabels[context].toLowerCase()} context preset.`,
       guidance: buildGuidance(item, runtimes),
       explanation: {
         fit: {
@@ -325,7 +319,7 @@ export function rankArtifactsWithExplanations(artifacts: Artifact[], config: Mac
           },
           runtimes,
           runtimeAssumption: "Runtime support is inferred from the artifact format; the model architecture is not verified against an installed runtime version.",
-          workload: { category, relevance: workloadRelevance(category, config.workload) },
+          workload: { category, relevance },
           pace: {
             bandwidthGbps: profile.bandwidthGbps,
             inputs: "Published family memory bandwidth relative to estimated model memory.",
@@ -337,9 +331,13 @@ export function rankArtifactsWithExplanations(artifacts: Artifact[], config: Mac
     }];
   });
   const grouped = new Map<string, Recommendation>();
-  for (const item of eligible.sort((a, b) => {
-    const scoreDifference = modelScore(b, config, b.memoryGb, now) - modelScore(a, config, a.memoryGb, now);
-    return scoreDifference || compareArtifactIdentity(a, b);
+  const scored = eligible.map((item) => ({
+    item,
+    score: modelScore(item, config, item.memoryGb, item.explanation.fit.workload.category, now),
+  }));
+  for (const { item } of scored.sort((a, b) => {
+    const scoreDifference = b.score - a.score;
+    return scoreDifference || compareArtifactIdentity(a.item, b.item);
   })) {
     const key = variantKey(item);
     if (!grouped.has(key)) grouped.set(key, item);
