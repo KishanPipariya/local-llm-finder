@@ -57,7 +57,7 @@ const knownFileSize = (size: unknown): size is number => typeof size === "number
 // weights when deciding that a repository is runnable.
 const mlxWeightFilename = /(?:^|\/)(?:model|weights?|consolidated)(?:-\d+-of-\d+)?\.safetensors$/i;
 const isMlxWeightFile = (file: HubFile) => mlxWeightFilename.test(file.rfilename);
-const mlxAdapterSignal = /(?:^|[^a-z0-9])(?:adapter|lora|qlora|peft)(?:$|[^a-z0-9])/i;
+const mlxAdapterSignal = /(?:^|[^a-z0-9])(?:adapters?|loras?|qloras?|pefts?)(?:$|[^a-z0-9])/i;
 const isMlxAdapterRepository = (model: HubModel, files: HubFile[]) => mlxAdapterSignal.test([
   model.id,
   model.cardData?.model_name,
@@ -153,6 +153,11 @@ function asParameterCount(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
+function asPositiveParameterCount(value: unknown): number | undefined {
+  const count = asParameterCount(value);
+  return count !== undefined && count > 0 ? count : undefined;
+}
+
 function normalizeHubFile(value: unknown): HubFile | undefined {
   const file = asRecord(value);
   if (!file) return undefined;
@@ -196,7 +201,9 @@ function normalizeGguf(value: unknown): HubModel["gguf"] | undefined {
 function normalizeSafetensors(value: unknown): HubModel["safetensors"] | undefined {
   const safetensors = asRecord(value);
   if (!safetensors) return undefined;
-  const total = asParameterCount(safetensors.total);
+  // A zero total cannot describe a runnable model and must not suppress a
+  // valid sum of the structured parameter groups.
+  const total = asPositiveParameterCount(safetensors.total);
   const rawParameters = asRecord(safetensors.parameters);
   const parameterEntries = rawParameters ? Object.entries(rawParameters) : undefined;
   const parsedParameters = parameterEntries && parameterEntries.length <= MAX_PARAMETER_GROUPS
@@ -239,9 +246,12 @@ export function normalizeHubModel(value: unknown): HubModel | undefined {
   }) : undefined;
   const pipelineTag = asBoundedString(model.pipeline_tag);
   if (Array.isArray(model.siblings) && model.siblings.length > MAX_FILES_PER_REPOSITORY) return undefined;
-  const siblings = Array.isArray(model.siblings)
-    ? model.siblings.map(normalizeHubFile).filter((file): file is HubFile => file !== undefined)
-    : undefined;
+  const siblingCandidates = Array.isArray(model.siblings) ? model.siblings.map(normalizeHubFile) : undefined;
+  // MLX installation snapshots the complete repository, so silently omitting
+  // one malformed entry could understate its download size. Reject the entire
+  // repository unless every declared sibling can be normalized safely.
+  if (siblingCandidates?.some((file) => file === undefined)) return undefined;
+  const siblings = siblingCandidates?.filter((file): file is HubFile => file !== undefined);
   if (siblings && !hasUniqueFilePaths(siblings)) return undefined;
   const normalized: HubModel = {
     id,
@@ -292,7 +302,10 @@ export function parseHubModelList(value: unknown): HubModel[] {
 }
 
 function modelFiles(model: HubModel): HubFile[] {
-  const files = (model.siblings ?? []).filter((file) => isSafeRelativePath(file.rfilename));
+  if (!Array.isArray(model.siblings) || model.siblings.length > MAX_FILES_PER_REPOSITORY) return [];
+  const candidates = model.siblings.map(normalizeHubFile);
+  if (candidates.some((file) => file === undefined)) return [];
+  const files = candidates.filter((file): file is HubFile => file !== undefined);
   return hasUniqueFilePaths(files) ? files : [];
 }
 
@@ -325,11 +338,25 @@ function plausibleParamsB(value: unknown, sizeBytes: number, quantization?: stri
   return candidate <= Math.max(1, sizeBytes / minimumBytesPerB(quantization)) ? candidate : undefined;
 }
 
-function modelParamCandidates(model: HubModel): unknown[] {
+function safetensorsParameterTotal(model: HubModel) {
+  const explicitTotal = asPositiveParameterCount(model.safetensors?.total);
+  if (explicitTotal !== undefined) return explicitTotal;
+  if (!model.safetensors?.parameters) return undefined;
+  const values = Object.values(model.safetensors.parameters);
+  if (values.length > MAX_PARAMETER_GROUPS) return undefined;
+  const counts = values.map(asParameterCount);
+  if (counts.some((value) => value === undefined)) return undefined;
+  const total = counts.reduce<number>((sum, value) => sum + value!, 0);
+  return Number.isSafeInteger(total) && total > 0 ? total : undefined;
+}
+
+function modelParamCandidates(model: HubModel, format: Artifact["format"]): unknown[] {
   // Hugging Face exposes GGUF parameter counts in `gguf.total`; cardData.params
-  // is an optional custom model-card field and is absent for many real repos.
-  const safetensorsTotal = model.safetensors?.total ?? (model.safetensors?.parameters ? Object.values(model.safetensors.parameters).reduce((sum, value) => sum + value, 0) : undefined);
-  return [model.cardData?.params, model.gguf?.total, safetensorsTotal, model.cardData?.base_model, model.id];
+  // is an optional custom model-card field. Prefer the structured metadata for
+  // the artifact's format before consulting that less authoritative fallback.
+  const safetensorsTotal = safetensorsParameterTotal(model);
+  const structured = format === "gguf" ? [model.gguf?.total, safetensorsTotal] : [safetensorsTotal, model.gguf?.total];
+  return [...structured, model.cardData?.params, model.cardData?.base_model, model.id];
 }
 
 function modelContextTokens(model: HubModel): number | undefined {
@@ -371,7 +398,7 @@ export function normalizeModels(models: HubModel[], format: Artifact["format"]):
         format,
         sizeBytes: artifactSize,
         sizeGb: Math.round((artifactSize / 1e9) * 10) / 10,
-        paramsB: modelParamCandidates(model)
+        paramsB: modelParamCandidates(model, format)
           .map((candidate) => plausibleParamsB(candidate, artifactSize, quantization))
           .find((candidate): candidate is number => candidate !== undefined),
         quantization,

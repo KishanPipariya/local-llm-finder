@@ -150,10 +150,11 @@ to the nearest supported value when the chip changes.
 
 `Artifact.sizeBytes` is the source of truth for capacity calculations;
 `sizeGb` is display-only. Hugging Face responses are untrusted runtime input:
-models without a valid ID are discarded, malformed optional nested metadata is
-omitted, and malformed files are discarded before `Artifact` values are
-created. Repository IDs must use exactly one owner/name separator, fit Hugging
-Face's 96-character bound, use only its supported identifier characters, and
+models without a valid ID are discarded and malformed optional nested metadata
+is omitted. A repository containing any malformed file entry is rejected before
+`Artifact` values are created, because dropping an entry could undercount a
+complete MLX snapshot. Repository IDs must use exactly one owner/name separator,
+fit Hugging Face's 96-character bound, use only its supported identifier characters, and
 exclude forbidden edge, repeated punctuation, and `.git` suffixes.
 Normalization excludes unknown, non-integer, and smaller-than-100 MB artifacts.
 
@@ -192,9 +193,11 @@ Normalization excludes unknown, non-integer, and smaller-than-100 MB artifacts.
   file in the repository snapshot—not only recognised runtime assets.
   Every declared checkpoint shard must be present with a valid one-based index;
   incomplete or internally inconsistent shard groups are unsupported artifacts.
-  Duplicate normalized repository paths reject the repository before snapshot
-  sizing, preventing repeated metadata entries from inflating fit estimates.
-  Adapter-only, LoRA, QLoRA, and PEFT repositories are classified as unsupported
+  Duplicate normalized repository paths or any malformed sibling entry reject
+  the repository before snapshot sizing, preventing repeated entries from
+  inflating or omitted entries from understating fit estimates.
+  Adapter-only, LoRA, QLoRA, and PEFT repositories, including plural forms of
+  those metadata signals, are classified as unsupported
   artifacts even when they contain a `.safetensors` file, because MLX-LM needs a
   complete, self-contained base-model snapshot. Tokenizer, optimizer, training
   state, and other arbitrarily named safetensors do not count as model weights.
@@ -260,8 +263,10 @@ text/chat/coding evidence is present; format, author, and model-family names are
 not sufficient. Explicit unknown or incompatible pipeline tasks are excluded
 conservatively. Numeric parameter metadata is normalized to billions from
 standard GGUF or safetensors totals, model-card values, base-model names, or
-repository names when plausible. Safetensors totals and parameter groups must
-be non-negative safe integers before aggregation. Workload metadata is presented only as
+repository names when plausible. Structured metadata for the artifact's format
+takes precedence over optional model-card metadata. Safetensors totals must be
+positive safe integers; parameter groups may be zero but their positive aggregate
+must remain a safe integer. Workload metadata is presented only as
 coding-oriented, general chat, mixed, or unknown—not as a capability benchmark. A bounded
 precision preference ranks higher-precision variants ahead of more aggressively
 compressed variants when both fit; this is not presented as a quality benchmark. Ranking
