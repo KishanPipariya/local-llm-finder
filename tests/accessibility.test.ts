@@ -291,6 +291,18 @@ try {
   const partial = await narrowContext.newPage();
   await partial.goto(`${origin}/?chip=m4`, { waitUntil: "networkidle" });
   assert.deepEqual(await partial.locator(".field-error").allTextContents(), ["Choose a memory configuration supported by that chip.", "Free disk space must be between 1 and 4,000 GB.", "Choose a workload."], "partial GET uses the same required fields as the API");
+  assert.equal(await partial.locator("#memoryGb").inputValue(), "", "missing memory remains visibly unselected after server validation");
+  assert.equal(await partial.locator("#diskGb").inputValue(), "", "missing disk remains visibly empty after server validation");
+  assert.equal(await partial.locator("#memoryGb").evaluate((select: HTMLSelectElement) => select.checkValidity()), false, "missing memory remains invalid to the native form");
+  assert.equal(await partial.locator("#diskGb").evaluate((input: HTMLInputElement) => input.checkValidity()), false, "missing disk remains invalid to the native form");
+
+  const invalidRuntime = await narrowContext.newPage();
+  await invalidRuntime.goto(`${origin}/?chip=m4&memoryGb=16&diskGb=80&workload=balanced&runtime=unsupported&context=normal`, { waitUntil: "networkidle" });
+  assert.equal(await invalidRuntime.locator('input[name="runtime"]:checked').count(), 0, "an unsupported runtime is not replaced by a valid-looking checked choice");
+  assert.equal(await invalidRuntime.locator("#runtime-ollama").evaluate((input: HTMLInputElement) => input.checkValidity()), false, "the invalid runtime group requires an explicit valid correction");
+  await invalidRuntime.locator('label:has(#runtime-any)').click();
+  assert.equal(await invalidRuntime.locator("#runtime-error").count(), 0, "choosing the runtime-neutral option clears the stale server error");
+  assert.equal(await invalidRuntime.locator("#runtime-any").evaluate((input: HTMLInputElement) => input.checkValidity()), true, "the corrected runtime group is natively valid");
 
   const phoneInitial = await waitForPage(phoneContext);
   await assertNoAxeViolations(phoneInitial, "375px initial finder");

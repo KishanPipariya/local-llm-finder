@@ -5,6 +5,7 @@ import { HardwareSelector } from "@/app/components/hardware-selector";
 import { chipProfiles, type Chip, type ConfigField, type ConfigFieldErrors, type ContextPreset, type Runtime } from "@/lib/hardware";
 
 type FormConfig = { chip?: string; memoryGb?: number; diskGb?: number; workload?: string; runtime?: string; context?: string };
+type RuntimeChoice = Runtime | "any";
 const fieldTargets: Record<ConfigField, string> = { chip: "chip", memoryGb: "memoryGb", diskGb: "diskGb", workload: "workload-chat", runtime: "runtime-ollama", context: "context-small" };
 const contextConsequences = { small: "Good for a short chat or one small file.", normal: "Good for chat and a few files.", long: "Reserves more memory for large repositories and documents." } as const;
 const runtimeDescriptions = { ollama: "The simplest starting point: install one app and run a short command.", lmStudio: "A desktop app with a visual model browser and chat window.", mlx: "Apple-silicon-native terminal tools that require uv and uvx.", llamaCpp: "A lightweight command-line runtime with flexible local controls.", any: "Keep GGUF and MLX options in the same shortlist without filtering to one app." } as const;
@@ -21,11 +22,11 @@ export function FinderForm({ config, submitted, fieldErrors, catalogueError }: {
   const initialChip: Chip = typeof config.chip === "string" && config.chip in chipProfiles ? config.chip as Chip : "m4";
   const [chip, setChip] = useState(initialChip);
   const [submittedChip, setSubmittedChip] = useState(fieldErrors.chip ? config.chip : undefined);
-  const [memoryGb, setMemoryGb] = useState(fieldErrors.memoryGb ? config.memoryGb ?? 16 : validInitialMemory(initialChip, config.memoryGb ?? 16));
-  const [diskGb, setDiskGb] = useState(String(config.diskGb ?? 80));
+  const [memoryGb, setMemoryGb] = useState(fieldErrors.memoryGb ? config.memoryGb ?? Number.NaN : validInitialMemory(initialChip, config.memoryGb ?? 16));
+  const [diskGb, setDiskGb] = useState(fieldErrors.diskGb ? Number.isFinite(config.diskGb) ? String(config.diskGb) : "" : String(config.diskGb ?? 80));
   const [workload, setWorkload] = useState<"chat" | "coding" | "balanced" | undefined>(fieldErrors.workload ? undefined : config.workload === "chat" || config.workload === "coding" ? config.workload : "balanced");
   const configuredRuntime = config.runtime === "ollama" || config.runtime === "lmStudio" || config.runtime === "mlx" || config.runtime === "llamaCpp" ? config.runtime : undefined;
-  const [runtime, setRuntime] = useState<Runtime | undefined>(fieldErrors.runtime ? undefined : configuredRuntime ?? (submitted && config.runtime === undefined ? undefined : "ollama"));
+  const [runtime, setRuntime] = useState<RuntimeChoice | undefined>(fieldErrors.runtime ? undefined : configuredRuntime ?? (submitted && config.runtime === undefined ? "any" : "ollama"));
   const configuredContext = config.context === "small" || config.context === "long" || config.context === "normal" ? config.context : undefined;
   const [context, setContext] = useState<ContextPreset | undefined>(fieldErrors.context ? undefined : configuredContext ?? "normal");
   const [hardwareStatus, setHardwareStatus] = useState("");
@@ -47,7 +48,7 @@ export function FinderForm({ config, submitted, fieldErrors, catalogueError }: {
     setHardwareStatus(status);
   };
 
-  const runtimeLabel = runtime === undefined ? "Any compatible format" : runtime === "lmStudio" ? "LM Studio" : runtime === "llamaCpp" ? "llama.cpp" : runtime === "mlx" ? "MLX" : "Ollama";
+  const runtimeLabel = runtime === undefined ? "Choose a runtime" : runtime === "any" ? "Any compatible format" : runtime === "lmStudio" ? "LM Studio" : runtime === "llamaCpp" ? "llama.cpp" : runtime === "mlx" ? "MLX" : "Ollama";
 
   return <section className="finder" id="finder" aria-labelledby="finder-title">
     <div className="section-intro">
@@ -110,7 +111,7 @@ export function FinderForm({ config, submitted, fieldErrors, catalogueError }: {
         <legend>Preferred app to run models</legend>
         <p className="section-help"><b>Not sure?</b> Ollama is the recommended default. Choose Any compatible format to keep both GGUF and MLX options in the shortlist.</p>
         <div className="choices runtime">{runtimeOptions.map(([value, label]) => <label key={value}>
-          <input id={`runtime-${value}`} name="runtime" type="radio" value={value} checked={value === "any" ? runtime === undefined : runtime === value} onChange={() => { clearFieldErrors("runtime"); setRuntime(value === "any" ? undefined : value); }}/>
+          <input id={`runtime-${value}`} name="runtime" type="radio" value={value} required={value === "ollama"} checked={runtime === value} onChange={() => { clearFieldErrors("runtime"); setRuntime(value); }}/>
           <span><b>{label}</b><small>{runtimeDescriptions[value]}</small></span>
         </label>)}</div>
         {visibleFieldErrors.runtime && <span className="field-error" id="runtime-error">{visibleFieldErrors.runtime}</span>}

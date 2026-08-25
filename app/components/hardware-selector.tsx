@@ -38,8 +38,8 @@ export function HardwareSelector({ chip, submittedChip, memoryGb, fieldErrors, o
       {fieldErrors.chip && <span className="field-error" id="chip-error">{fieldErrors.chip}</span>}
     </label>
     <label htmlFor="memoryGb">Unified memory (GB)
-      <select id="memoryGb" name="memoryGb" required value={memoryIsFinite ? memoryGb : "invalid-memory"} onChange={(event) => onChange(chip, Number(event.target.value), "")} aria-invalid={Boolean(fieldErrors.memoryGb)} aria-describedby={fieldErrors.memoryGb ? "memory-error" : undefined}>
-        {!memoryIsFinite && <option value="invalid-memory">Submitted memory value is invalid</option>}
+      <select id="memoryGb" name="memoryGb" required value={memoryIsFinite ? memoryGb : ""} onChange={(event) => onChange(chip, Number(event.target.value), "")} aria-invalid={Boolean(fieldErrors.memoryGb)} aria-describedby={fieldErrors.memoryGb ? "memory-error" : undefined}>
+        {!memoryIsFinite && <option value="" disabled>Choose unified memory</option>}
         {renderedMemoryOptions.map((memoryOption) => { const supportedByChip = memoryOptions.includes(memoryOption); const submittedUnsupported = memoryOption === memoryGb && !supportedByChip; return <option key={memoryOption} value={memoryOption}>{memoryOption} GB{(!enhanced || fieldErrors.memoryGb) && ` (${chips.filter((chipOption) => (chipOption.memoryOptionsGb as readonly number[]).includes(memoryOption)).map((chipOption) => chipOption.name).join(", ")})`}{submittedUnsupported ? " — submitted value is unsupported for this chip" : ""}</option>; })}
       </select>
       {fieldErrors.memoryGb && <span className="field-error" id="memory-error">{fieldErrors.memoryGb}</span>}

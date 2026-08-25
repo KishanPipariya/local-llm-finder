@@ -147,7 +147,11 @@ hexadecimal, padded, leading-plus, and incomplete-decimal representations are
 rejected instead of being accepted through broad JavaScript numeric coercion.
 The native GET form uses an unrestricted numeric step so fractional free-space
 values accepted by shared validation, such as `12.5`, remain directly
-submittable with or without JavaScript.
+submittable with or without JavaScript. After an incomplete or malformed GET
+submission, missing memory and disk remain visibly empty and natively invalid;
+an unsupported runtime leaves its required radio group unselected. The form does
+not replace server-invalid fields with valid-looking defaults before the person
+corrects them.
 
 The hardware selector server-renders the union of all memory sizes so a person
 can choose a valid chip/memory pair even with JavaScript disabled. After
@@ -437,7 +441,8 @@ unit tests, and a production build); the longer Playwright/axe suite remains in
 `npm test` and the full `npm run verify` release check. The individual commands
 remain available, and Git's standard `--no-verify` option can bypass a hook
 when explicitly needed. GitHub Actions is the repository verification gate: it
-runs on pull requests and pushes to `main`, using Node 24 with npm caching, and
+runs on pull requests and pushes to `main`, using the pinned Ubuntu 24.04 runner,
+immutable release commits for its GitHub-authored actions, Node 24 with npm caching, and
 executes a production-dependency audit, linting, coverage-gated unit tests, the
 production build (as part of the accessibility suite), and the Playwright/axe
 checks. Husky remains local feedback; Git hooks can
