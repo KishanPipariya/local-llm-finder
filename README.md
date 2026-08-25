@@ -79,7 +79,8 @@ Each framework-cached refresh uses four Hugging Face `full=true` list responses 
 and 20 recently updated repositories filtered by the GGUF format, plus the same two samples from
 `mlx-community`). A refresh tolerates either the popular or recent request failing
 within a format, but requires at least one valid discovery response for both GGUF
-and MLX. It then requests each selected repository's `blobs=true` metadata and
+and MLX. Responses to the MLX feeds are explicitly checked to remain within the
+requested `mlx-community` owner. It then requests each selected repository's `blobs=true` metadata and
 normalizes the verified responses. There are no
 non-Hugging-Face catalogue requests. MLX sizes represent the complete snapshot
 download and are rejected when any repository file has an unknown size; imports

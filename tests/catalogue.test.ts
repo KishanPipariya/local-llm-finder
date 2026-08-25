@@ -315,6 +315,15 @@ test("upstream JSON responses are bounded before parsing", async () => {
 
   const streamedOversized = new Response("x".repeat(MAX_RESPONSE_BYTES + 1));
   await assert.rejects(fetchJson("https://example.test/metadata", async () => streamedOversized, controller.signal, "Catalogue"), /exceeded/);
+
+  const hangingCancellation = new Response(new ReadableStream<Uint8Array>({
+    start(streamController) { streamController.enqueue(new Uint8Array(MAX_RESPONSE_BYTES + 1)); },
+    cancel() { return new Promise<void>(() => undefined); },
+  }));
+  await Promise.race([
+    assert.rejects(fetchJson("https://example.test/metadata", async () => hangingCancellation, controller.signal, "Catalogue"), /exceeded/),
+    new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("response cancellation blocked the size bound")), 100)),
+  ]);
 });
 
 test("catalogue excludes non-chat tasks and non-standalone GGUF files", () => {
@@ -402,6 +411,15 @@ test("catalogue refresh rejects detail metadata for a substituted repository ide
     return Response.json(listedMlxModel);
   };
   await assert.rejects(retrieveCatalogue(substituted as typeof fetch), /gguf metadata refresh was materially incomplete/);
+});
+
+test("catalogue refresh enforces the requested MLX publisher scope", async () => {
+  const outsider = { ...listedMlxModel, id: "other/Model-MLX" };
+  const outOfScope = async (url: string) => {
+    if (url.includes("?full=true")) return Response.json(url.includes("author=mlx-community") ? [outsider] : [listedModel]);
+    return Response.json(url.includes("other/Model-MLX") ? outsider : listedModel);
+  };
+  await assert.rejects(retrieveCatalogue(outOfScope as typeof fetch), /mlx discovery feeds were unavailable/);
 });
 
 test("catalogue refresh bounds aggregate normalized metadata", async () => {
@@ -504,6 +522,9 @@ test("bounded mapper preserves order and does not start workers for an empty lis
   assert.deepEqual(values, [2, 4, 6, 8]);
   assert.equal(peak, 2);
   assert.deepEqual(await mapWithConcurrency([], 2, async () => 1), []);
+  for (const invalidLimit of [0, -1, Number.NaN, 1.5]) {
+    await assert.rejects(mapWithConcurrency([1], invalidLimit, async (value) => value), /positive safe integer/);
+  }
 });
 
 test("interleaves popular and recent feeds without duplicate repositories", () => {

@@ -10,6 +10,15 @@ export const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 export type FetchLike = typeof fetch;
 
+type Cancelable = { cancel(reason?: unknown): Promise<void> };
+
+function cancelWithoutWaiting(cancelable: Cancelable, reason?: unknown) {
+  // Cancellation is cleanup, not part of the response deadline. A stream source
+  // is allowed to return a promise here, so never let a stuck cleanup operation
+  // defeat the byte or time bound that caused it.
+  try { void cancelable.cancel(reason).catch(() => undefined); } catch { /* Best-effort cleanup. */ }
+}
+
 export function requestSignal(refreshSignal: AbortSignal, requestTimeoutMs = REQUEST_TIMEOUT_MS) {
   return AbortSignal.any([AbortSignal.timeout(requestTimeoutMs), refreshSignal]);
 }
@@ -17,6 +26,7 @@ export function requestSignal(refreshSignal: AbortSignal, requestTimeoutMs = REQ
 async function readBoundedText(response: Response, source: string): Promise<string> {
   const declaredLength = response.headers.get("content-length");
   if (declaredLength !== null && Number.isSafeInteger(Number(declaredLength)) && Number(declaredLength) > MAX_RESPONSE_BYTES) {
+    if (response.body) cancelWithoutWaiting(response.body);
     throw new Error(`${source} response exceeded the ${MAX_RESPONSE_BYTES}-byte limit`);
   }
   if (!response.body) return response.text();
@@ -31,7 +41,7 @@ async function readBoundedText(response: Response, source: string): Promise<stri
       if (!value) continue;
       total += value.byteLength;
       if (total > MAX_RESPONSE_BYTES) {
-        await reader.cancel();
+        cancelWithoutWaiting(reader);
         throw new Error(`${source} response exceeded the ${MAX_RESPONSE_BYTES}-byte limit`);
       }
       chunks.push(value);
@@ -56,6 +66,7 @@ export async function fetchJson(url: string, fetcher: FetchLike, refreshSignal: 
 }
 
 export async function mapWithConcurrency<T, R>(values: readonly T[], limit: number, worker: (value: T) => Promise<R>): Promise<R[]> {
+  if (!Number.isSafeInteger(limit) || limit < 1) throw new RangeError("Concurrency limit must be a positive safe integer");
   const results = new Array<R>(values.length);
   let next = 0;
   await Promise.all(Array.from({ length: Math.min(limit, values.length) }, async () => {

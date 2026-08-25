@@ -78,6 +78,21 @@ test("POST bounds request-body read time before validation", async () => {
   assert.equal(called, false);
 });
 
+test("POST deadlines do not wait for request-stream cancellation", async () => {
+  let called = false;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) { controller.enqueue(new TextEncoder().encode("{")); },
+    cancel() { return new Promise<void>(() => undefined); },
+  });
+  const request = new Request("http://test/api/recommendations", { method: "POST", body, duplex: "half" } as RequestInit & { duplex: "half" });
+  const result = await Promise.race([
+    handleRecommendationPost(request, async () => { called = true; return {}; }, "unavailable", 5),
+    new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("request cancellation blocked the deadline")), 100)),
+  ]);
+  assert.equal(result.status, 400);
+  assert.equal(called, false);
+});
+
 test("service merges only known typed catalogue exclusion reasons", () => {
   const ranking = { insufficientDisk: 1, insufficientMemory: 0, insufficientContext: 0, invalidSize: 0, unsupportedFormat: 2, unsupportedArtifact: 0 };
   assert.deepEqual(mergeExclusions(ranking, { insufficientMemory: 3, invalidSize: 1 }), { insufficientDisk: 1, insufficientMemory: 3, insufficientContext: 0, invalidSize: 1, unsupportedFormat: 2, unsupportedArtifact: 0 });

@@ -308,6 +308,13 @@ export function parseHubModelList(value: unknown): HubModel[] {
   return models;
 }
 
+function requireModelOwner(models: HubModel[], owner: string): HubModel[] {
+  if (models.some((model) => model.id.split("/")[0] !== owner)) {
+    throw new Error(`Hugging Face returned a model outside the requested ${owner} owner`);
+  }
+  return models;
+}
+
 function modelFiles(model: HubModel): HubFile[] {
   if (!Array.isArray(model.siblings) || model.siblings.length > MAX_FILES_PER_REPOSITORY) return [];
   const candidates = model.siblings.map(normalizeHubFile);
@@ -501,8 +508,8 @@ export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeo
     const [popularGgufResult, recentGgufResult, popularMlxResult, recentMlxResult] = await Promise.allSettled([
       fetchJson(`${listBase}&sort=downloads&filter=gguf`, fetcher, refreshController.signal, "Hugging Face", requestTimeoutMs).then(parseHubModelList),
       fetchJson(`${listBase}&sort=lastModified&filter=gguf`, fetcher, refreshController.signal, "Hugging Face", requestTimeoutMs).then(parseHubModelList),
-      fetchJson(`${listBase}&sort=downloads&author=mlx-community`, fetcher, refreshController.signal, "Hugging Face", requestTimeoutMs).then(parseHubModelList),
-      fetchJson(`${listBase}&sort=lastModified&author=mlx-community`, fetcher, refreshController.signal, "Hugging Face", requestTimeoutMs).then(parseHubModelList),
+      fetchJson(`${listBase}&sort=downloads&author=mlx-community`, fetcher, refreshController.signal, "Hugging Face", requestTimeoutMs).then(parseHubModelList).then((models) => requireModelOwner(models, "mlx-community")),
+      fetchJson(`${listBase}&sort=lastModified&author=mlx-community`, fetcher, refreshController.signal, "Hugging Face", requestTimeoutMs).then(parseHubModelList).then((models) => requireModelOwner(models, "mlx-community")),
     ]);
     refreshController.signal.throwIfAborted();
     const successfulLists = (format: Artifact["format"], results: PromiseSettledResult<HubModel[]>[]) => {

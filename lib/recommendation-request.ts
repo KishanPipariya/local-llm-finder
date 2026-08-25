@@ -6,6 +6,14 @@ export type PostResult<T> = { status: 200; body: T } | { status: 400; body: { er
 const MAX_REQUEST_BYTES = 32 * 1024;
 export const REQUEST_BODY_TIMEOUT_MS = 5_000;
 
+type Cancelable = { cancel(reason?: unknown): Promise<void> };
+
+function cancelWithoutWaiting(cancelable: Cancelable, reason?: unknown) {
+  // Request validation must finish within its own deadline even if stream
+  // cleanup supplied by the host never settles.
+  try { void cancelable.cancel(reason).catch(() => undefined); } catch { /* Best-effort cleanup. */ }
+}
+
 function readWithSignal(reader: ReadableStreamDefaultReader<Uint8Array>, signal: AbortSignal) {
   if (signal.aborted) return Promise.reject(signal.reason);
   return new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
@@ -18,7 +26,10 @@ function readWithSignal(reader: ReadableStreamDefaultReader<Uint8Array>, signal:
 async function readJson(request: Request, timeoutMs: number): Promise<unknown> {
   try {
     const declaredLength = request.headers.get("content-length");
-    if (declaredLength !== null && Number.isSafeInteger(Number(declaredLength)) && Number(declaredLength) > MAX_REQUEST_BYTES) return null;
+    if (declaredLength !== null && Number.isSafeInteger(Number(declaredLength)) && Number(declaredLength) > MAX_REQUEST_BYTES) {
+      if (request.body) cancelWithoutWaiting(request.body);
+      return null;
+    }
     if (!request.body) return null;
     const reader = request.body.getReader();
     const chunks: Uint8Array[] = [];
@@ -30,16 +41,16 @@ async function readJson(request: Request, timeoutMs: number): Promise<unknown> {
         if (done) break;
         total += value.byteLength;
         if (total > MAX_REQUEST_BYTES) {
-          await reader.cancel();
+          cancelWithoutWaiting(reader);
           return null;
         }
         chunks.push(value);
       }
     } catch (error) {
-      await reader.cancel(error).catch(() => undefined);
+      cancelWithoutWaiting(reader, error);
       throw error;
     } finally {
-      reader.releaseLock();
+      try { reader.releaseLock(); } catch { /* Cancellation will release pending reads. */ }
     }
     const bytes = new Uint8Array(total);
     let offset = 0;

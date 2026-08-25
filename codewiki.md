@@ -210,6 +210,11 @@ Normalization excludes unknown, non-integer, and smaller-than-100 MB artifacts.
   snapshot in an artifact-specific directory below `./local-models`, then runs
   `uvx --from mlx-lm mlx_lm.generate`, requiring `uv`/`uvx`. The format is usable
   by MLX-LM when that installed version supports the model architecture.
+
+Both `mlx-community` discovery feeds reject the whole response when any returned
+repository belongs to another owner. This validates the requested publisher
+scope instead of trusting the upstream query filter; the normal one-feed failure
+tolerance still applies when the other MLX feed is valid.
 - Disk fit is operationally strict: normal downloads and temporary working files
   use a 1.25× artifact estimate, while GGUF results that retain Ollama use 2.5×
   to account for the downloaded file and temporary import copy while preserving
@@ -317,7 +322,9 @@ each format: one may fail without aborting the refresh, but both feeds failing
 for either GGUF or MLX makes the refresh unavailable.
 Because those list responses contain filenames but not reliable byte sizes, it
 then obtains each selected repository's `blobs=true` metadata with a bounded
-global concurrency of six in-flight requests across both formats. Each upstream response is capped at 8 MiB; normalized identifiers, paths, tags, and metadata strings have field and cardinality limits; one repository can retain at most 1 MiB of normalized text metadata; and a complete refresh can retain at most 8 MiB. Each repository is also capped at 20,000 metadata files before normalization. A repository that disappears or
+global concurrency of six in-flight requests across both formats. The shared
+mapper rejects non-integer, non-positive, or unsafe concurrency limits instead
+of returning an unprocessed sparse result. Each upstream response is capped at 8 MiB; normalized identifiers, paths, tags, and metadata strings have field and cardinality limits; one repository can retain at most 1 MiB of normalized text metadata; and a complete refresh can retain at most 8 MiB. Each repository is also capped at 20,000 metadata files before normalization. A repository that disappears or
 fails during that second step, substitutes a different repository ID, or does
 not return a canonical commit hash, is
 excluded; its unverified files are never
@@ -329,6 +336,9 @@ replacing the last valid catalogue with a severely truncated one. Each request h
 production timeout, while a complete refresh has a 30-second deadline that aborts all
 outstanding work. Both limits are injectable at the retrieval boundary so timeout
 tests use millisecond-scale deadlines instead of waiting for production timers.
+Oversized upstream bodies are cancelled as best-effort cleanup, but refresh
+failure does not wait for the cancellation promise because a non-settling stream
+must not defeat the request or refresh deadline.
 A refresh-controller abort fails the complete refresh
 atomically so the last valid local catalogue can be served as stale. An empty
 usable catalogue for either GGUF or MLX also fails the full refresh, preventing a
@@ -374,7 +384,9 @@ the process-local cache remains the source of stale-fallback behavior.
 The POST adapter reads the native `Request` stream directly. It cancels and
 rejects bodies that exceed 32 KiB, take longer than five seconds to finish, or
 are aborted by the client, then maps them through the existing `400` validation
-response without invoking catalogue retrieval.
+response without invoking catalogue retrieval. Stream cancellation is
+best-effort cleanup and is never awaited, so a host-provided cancellation promise
+cannot keep the validation response pending beyond the body-read deadline.
 
 ## Development and verification
 
