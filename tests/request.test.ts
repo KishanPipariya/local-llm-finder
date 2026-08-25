@@ -27,6 +27,19 @@ test("GET parsing and POST validation keep runtime and context preferences align
   assert.equal(response.status, 400);
 });
 
+test("successful validation returns only canonical configuration fields", async () => {
+  const input = { ...valid, runtime: "mlx" as const, context: "small" as const, ignored: "request-only data" };
+  assert.deepEqual(validateConfig(input), {
+    valid: true,
+    data: { ...valid, runtime: "mlx", context: "small" },
+  });
+
+  let received: MacConfig | undefined;
+  const handler = createPostHandler(async (config) => { received = config; return {}; });
+  assert.equal((await handler(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify(input) }))).status, 200);
+  assert.deepEqual(received, { ...valid, runtime: "mlx", context: "small" });
+});
+
 test("GET validation remains aligned with POST validation", async () => {
   const handler = createPostHandler(async () => ({ recommendations: [], exclusions: { insufficientDisk: 0, insufficientMemory: 0, insufficientContext: 0, invalidSize: 0, unsupportedFormat: 0, unsupportedArtifact: 0, catalogueLimit: 0 }, refreshedAt: "2026-08-01T00:00:00Z", stale: false }));
   for (const input of [valid, { chip: "m4" }, { ...valid, memoryGb: 99, diskGb: 0, workload: "other" }]) {
@@ -59,6 +72,22 @@ test("GET treats the explicit runtime-neutral UI choice as an omitted preference
   const parsed = parseFinderRequest({ chip: "m4", memoryGb: "16", diskGb: "80", workload: "balanced", runtime: "any" });
   assert.deepEqual(parsed.candidate, { chip: "m4", memoryGb: 16, diskGb: 80, workload: "balanced" });
   assert.deepEqual(parsed.validation, validateConfig(valid));
+});
+
+test("GET rejects non-decimal numeric syntax instead of applying broad JavaScript coercion", async () => {
+  const handler = createPostHandler(async () => { throw new Error("must not run"); });
+  for (const numericInput of ["0x10", " 16 ", "+16", "16."]) {
+    const getValidation = parseFinderRequest({ chip: "m4", memoryGb: numericInput, diskGb: "80", workload: "balanced" }).validation;
+    assert.equal(getValidation?.valid, false, `${JSON.stringify(numericInput)} is not valid form-number syntax`);
+
+    const response = await handler(new Request("http://test/api/recommendations", {
+      method: "POST",
+      body: JSON.stringify({ ...valid, memoryGb: numericInput }),
+    }));
+    assert.equal(response.status, 400, "POST rejects the corresponding non-numeric JSON string");
+  }
+
+  assert.equal(parseFinderRequest({ chip: "m4", memoryGb: "1.6e1", diskGb: "8e1", workload: "balanced" }).validation?.valid, true);
 });
 
 test("POST bounds request-body reads before validation", async () => {

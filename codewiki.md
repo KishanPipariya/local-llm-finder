@@ -12,7 +12,7 @@ recommendations without requiring client-side JavaScript.
 
 ```text
 Browser GET /?chip=…&memoryGb=…&diskGb=…&workload=…&runtime=…&context=…
-  -> lib/request.ts takes the first value for repeated fields, coerces numeric query values, and delegates hardware validation to lib/hardware.ts
+  -> lib/request.ts takes the first value for repeated fields, parses numeric query values with the form-compatible decimal grammar, and delegates hardware validation to lib/hardware.ts
   -> lib/recommendation-service.ts obtains the catalogue and ranks artifacts
   -> server-rendered FinderForm and Results response, including typed fit explanations and exclusion counts
 
@@ -137,9 +137,14 @@ and long links and disclosure summaries wrap rather than overflow.
   estimate. UI edit links serialize omitted context as `normal` and omitted
   runtime as `any`, so a round trip preserves the visible runtime-neutral profile.
 
-It returns both an ordered error list and typed field errors. Both GET and POST
-must use this function so they reject the same impossible Mac configurations,
-including incomplete submitted configurations.
+It returns both an ordered error list and typed field errors. Successful
+validation constructs a new `MacConfig` containing only the six recognized
+fields, so extra request properties do not cross the shared validation boundary.
+Both GET and POST must use this function so they reject the same impossible Mac
+configurations, including incomplete submitted configurations. GET memory and
+disk values use the browser number control's unsigned decimal/exponent syntax;
+hexadecimal, padded, leading-plus, and incomplete-decimal representations are
+rejected instead of being accepted through broad JavaScript numeric coercion.
 
 The hardware selector server-renders the union of all memory sizes so a person
 can choose a valid chip/memory pair even with JavaScript disabled. After

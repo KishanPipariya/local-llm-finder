@@ -13,6 +13,12 @@ export type FinderCandidate = {
 };
 
 const configurationFields = ["chip", "memoryGb", "diskGb", "workload", "runtime", "context"] as const;
+const decimalNumber = /^(?:\d+|\d*\.\d+)(?:[eE][+-]?\d+)?$/;
+
+function parseQueryNumber(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  return decimalNumber.test(value) ? Number(value) : Number.NaN;
+}
 
 export function firstQueryValue(params: FinderSearchParams, key: string): string | undefined {
   const value = params[key];
@@ -26,8 +32,8 @@ export function parseFinderRequest(params: FinderSearchParams) {
   const submitted = configurationFields.some((key) => value(key) !== undefined);
   const candidate: FinderCandidate = {
     chip: value("chip"),
-    memoryGb: memoryGb === undefined ? undefined : Number(memoryGb),
-    diskGb: diskGb === undefined ? undefined : Number(diskGb),
+    memoryGb: parseQueryNumber(memoryGb),
+    diskGb: parseQueryNumber(diskGb),
     workload: value("workload"),
   };
   const runtime = value("runtime");

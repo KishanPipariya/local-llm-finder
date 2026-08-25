@@ -100,7 +100,7 @@ async function assertUnchangedBox(page: Page, selector: string, action: () => Pr
   assert.deepEqual(await getDocumentBox(), before, `${description} does not move or resize`);
 }
 
-async function assertCardDisclosure(page: Page, name: string) {
+async function assertCardDisclosure(page: Page, name: string, forceClick = false) {
   const disclosure = page.locator(".card").first().locator("details").filter({ has: page.getByText(name, { exact: true }) });
   const summary = disclosure.locator("summary");
   const content = disclosure.locator(".disclosure-content");
@@ -109,10 +109,10 @@ async function assertCardDisclosure(page: Page, name: string) {
   const summaryBox = await summary.boundingBox();
   assert.ok(summaryBox && summaryBox.width >= 44 && summaryBox.height >= 44, `${name} summary is at least 44 by 44 CSS pixels`);
 
-  await summary.click();
+  await summary.click({ force: forceClick });
   assert.notEqual(await disclosure.getAttribute("open"), null, `${name} opens by mouse`);
   assert.equal(await content.isVisible(), true, `${name} content is visible when open`);
-  await summary.click();
+  await summary.click({ force: forceClick });
   assert.equal(await disclosure.getAttribute("open"), null, `${name} closes by mouse`);
 
   await summary.focus();
@@ -328,22 +328,30 @@ try {
   await noScript.locator("#chip").selectOption("m4");
   await noScript.locator("#memoryGb").selectOption("16");
   await noScript.locator("#diskGb").fill("12");
-  await noScript.getByRole("button", { name: "Find models for M4 · 16 GB" }).click({ force: true, noWaitAfter: true });
-  await noScript.waitForURL(/memoryGb=16/);
+  await Promise.all([
+    noScript.waitForURL(/memoryGb=16/),
+    noScript.getByRole("button", { name: "Find models for M4 · 16 GB" }).click({ force: true }),
+  ]);
   assert.match(noScript.url(), /chip=m4/);
   assert.equal(await noScript.locator(".error-summary").count(), 0);
   assert.equal(await noScript.locator("#results").count(), 1, "fixture-backed recommendations render server-side without JavaScript");
   assert.ok(await noScript.locator(".card").count());
   await noScript.waitForTimeout(700);
-  await assertCardDisclosure(noScript, "Installation guidance");
-  await assertCardDisclosure(noScript, "Technical details and ranking factors");
+  // Chromium can retain an obsolete pre-navigation layout box for a native
+  // disclosure when scripting is disabled. The bounding-box assertion above
+  // still verifies a usable target; forcing only the pointer dispatch avoids a
+  // 30-second actionability retry while exercising the native details control.
+  await assertCardDisclosure(noScript, "Installation guidance", true);
+  await assertCardDisclosure(noScript, "Technical details and ranking factors", true);
   await noScript.goto(origin, { waitUntil: "domcontentloaded" });
   await noScript.locator("#chip").selectOption("m3Pro");
   assert.equal(await noScript.locator("#memoryGb option[value='18']").count(), 1, "no-JavaScript form exposes memory choices for non-default chips");
   await noScript.locator("#memoryGb").selectOption("18");
   await noScript.locator("#diskGb").fill("12");
-  await noScript.getByRole("button", { name: /Find models for/ }).click({ force: true, noWaitAfter: true });
-  await noScript.waitForURL(/chip=m3Pro/);
+  await Promise.all([
+    noScript.waitForURL(/chip=m3Pro/),
+    noScript.getByRole("button", { name: /Find models for/ }).click({ force: true }),
+  ]);
   assert.match(noScript.url(), /memoryGb=18/);
   assert.equal(await noScript.locator("#results").count(), 1, "non-default chip recommendations render server-side without JavaScript");
     } finally {

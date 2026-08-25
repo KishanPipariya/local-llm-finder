@@ -39,7 +39,7 @@ export const contextPresets: readonly ContextPreset[] = ["small", "normal", "lon
 const workloads = ["chat", "coding", "balanced"] as const;
 
 export function validateConfig(value: unknown): { valid: true; data: MacConfig } | { valid: false; errors: string[]; fieldErrors: ConfigFieldErrors } {
-  const v = value as Partial<MacConfig>;
+  const v = value !== null && typeof value === "object" && !Array.isArray(value) ? value as Partial<MacConfig> : {};
   const fieldErrors: ConfigFieldErrors = {};
   const profile = v && typeof v.chip === "string" ? chipProfiles[v.chip as Chip] : undefined;
   if (!profile) fieldErrors.chip = "Choose a supported Apple chip.";
@@ -49,5 +49,14 @@ export function validateConfig(value: unknown): { valid: true; data: MacConfig }
   if (v?.runtime !== undefined && !runtimes.includes(v.runtime as Runtime)) fieldErrors.runtime = "Choose a supported runtime.";
   if (v?.context !== undefined && !contextPresets.includes(v.context as ContextPreset)) fieldErrors.context = "Choose a context preset.";
   const errors = Object.values(fieldErrors);
-  return errors.length ? { valid: false, errors, fieldErrors } : { valid: true, data: v as MacConfig };
+  if (errors.length) return { valid: false, errors, fieldErrors };
+  const data: MacConfig = {
+    chip: v.chip as Chip,
+    memoryGb: v.memoryGb as number,
+    diskGb: v.diskGb as number,
+    workload: v.workload as MacConfig["workload"],
+  };
+  if (v.runtime !== undefined) data.runtime = v.runtime as Runtime;
+  if (v.context !== undefined) data.context = v.context as ContextPreset;
+  return { valid: true, data };
 }
