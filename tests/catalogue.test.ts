@@ -272,6 +272,10 @@ function upstream(options: { unavailableModel?: string } = {}) {
   };
 }
 
+function requestedModelId(url: string) {
+  return decodeURIComponent(new URL(url).pathname.replace("/api/models/", ""));
+}
+
 test("catalogue refresh fetches blob metadata for every listed repository", async () => {
   const catalogue = await retrieveCatalogue(upstream() as typeof fetch);
   assert.deepEqual(catalogue.items.map((item) => item.format).sort(), ["gguf", "mlx"]);
@@ -286,6 +290,15 @@ test("catalogue refresh rejects detail metadata without an immutable commit", as
   await assert.rejects(retrieveCatalogue(unpinned as typeof fetch), /materially incomplete/);
 });
 
+test("catalogue refresh rejects detail metadata for a substituted repository identity", async () => {
+  const substituted = async (url: string) => {
+    if (url.includes("?full=true")) return Response.json(url.includes("author=mlx-community") ? [listedMlxModel] : [listedModel]);
+    if (url.includes("org/Model-GGUF")) return Response.json({ ...listedModel, id: "org/Other-Model-GGUF" });
+    return Response.json(listedMlxModel);
+  };
+  await assert.rejects(retrieveCatalogue(substituted as typeof fetch), /gguf metadata refresh was materially incomplete/);
+});
+
 test("catalogue refresh bounds aggregate normalized metadata", async () => {
   await assert.rejects(retrieveCatalogue(upstream() as typeof fetch, 30_000, 12_000, 1), /normalized size limit/);
 });
@@ -294,7 +307,7 @@ test("framework cache adapter is isolated from the unit-test runtime", async () 
   await assert.rejects(getCatalogue(), /cacheComponents/);
 });
 
-test("catalogue refresh uses blob metadata, rejects incomplete format feeds, and rejects failed lists", async () => {
+test("catalogue refresh uses blob metadata, rejects incomplete format feeds, and rejects total discovery failure", async () => {
   const urls: string[] = [];
   const listOnly = async (url: string, init?: RequestInit) => {
     urls.push(url);
@@ -311,7 +324,7 @@ test("catalogue refresh uses blob metadata, rejects incomplete format feeds, and
       return Response.json(url.includes("author=mlx-community") ? [listedMlxModel] : [listedModel, { ...listedModel, id: "org/Second-Model-GGUF" }]);
     }
     if (url.includes("org/Model-GGUF")) return new Response(null, { status: 503 });
-    return Response.json(url.includes("mlx-community") ? listedMlxModel : listedModel);
+    return Response.json(url.includes("mlx-community") ? listedMlxModel : { ...listedModel, id: requestedModelId(url) });
   };
   const partial = await retrieveCatalogue(partiallyUnavailable as typeof fetch);
   assert.deepEqual(partial.items.map((item) => item.format).sort(), ["gguf", "mlx"]);
@@ -368,7 +381,8 @@ test("catalogue refresh shares one six-request detail concurrency limit across f
     peak = Math.max(peak, inFlight);
     await new Promise<void>((resolve) => setImmediate(resolve));
     inFlight -= 1;
-    return Response.json(url.includes("mlx-community") ? listedMlxModel : listedModel);
+    const id = requestedModelId(url);
+    return Response.json(url.includes("mlx-community") ? { ...listedMlxModel, id } : { ...listedModel, id });
   };
   await retrieveCatalogue(boundedUpstream as typeof fetch);
   assert.equal(peak, 6);
@@ -393,6 +407,22 @@ test("interleaves popular and recent feeds without duplicate repositories", () =
   assert.deepEqual(interleaveUnique([popular, recent], 4).map((model) => model.id), ["org/Popular", "org/Recent", "org/Shared", "org/Popular-2"]);
 });
 
-test("catalogue refresh rejects a failed list request", async () => {
+test("catalogue refresh tolerates one failed discovery feed per format", async () => {
+  const partialDiscovery = async (url: string, init?: RequestInit) => {
+    if (url.includes("sort=downloads&filter=gguf") || url.includes("sort=lastModified&author=mlx-community")) {
+      return new Response(null, { status: 503 });
+    }
+    return upstream()(url, init);
+  };
+  const catalogue = await retrieveCatalogue(partialDiscovery as typeof fetch);
+  assert.deepEqual(catalogue.items.map((item) => item.format).sort(), ["gguf", "mlx"]);
+});
+
+test("catalogue refresh rejects when every discovery feed for a format fails", async () => {
+  const missingGgufDiscovery = async (url: string, init?: RequestInit) => {
+    if (url.includes("filter=gguf")) return new Response(null, { status: 503 });
+    return upstream()(url, init);
+  };
+  await assert.rejects(retrieveCatalogue(missingGgufDiscovery as typeof fetch), /gguf discovery feeds were unavailable/);
   await assert.rejects(retrieveCatalogue((async () => { throw new Error("offline"); }) as typeof fetch));
 });

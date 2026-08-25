@@ -298,11 +298,14 @@ requests: 20 popular and 20 recently updated repositories filtered by the GGUF
 format, plus the same
 two 20-repository samples from `mlx-community`. The interleaved sample gives
 newer repositories a chance to enter the bounded detail crawl without making
-refresh latency unbounded.
+refresh latency unbounded. Popular and recent discovery are redundant within
+each format: one may fail without aborting the refresh, but both feeds failing
+for either GGUF or MLX makes the refresh unavailable.
 Because those list responses contain filenames but not reliable byte sizes, it
 then obtains each selected repository's `blobs=true` metadata with a bounded
 global concurrency of six in-flight requests across both formats. Each upstream response is capped at 8 MiB; normalized identifiers, paths, tags, and metadata strings have field and cardinality limits; one repository can retain at most 1 MiB of normalized text metadata; and a complete refresh can retain at most 8 MiB. Each repository is also capped at 20,000 metadata files before normalization. A repository that disappears or
-fails during that second step, or does not return a canonical commit hash, is
+fails during that second step, substitutes a different repository ID, or does
+not return a canonical commit hash, is
 excluded; its unverified files are never
 recommended. The detail response also supplies optional model configuration and
 GGUF context metadata used to verify the selected context preset. If more than half of detail requests fail overall, more than half

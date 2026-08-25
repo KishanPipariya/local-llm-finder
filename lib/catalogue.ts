@@ -428,7 +428,10 @@ export function interleaveUnique(lists: HubModel[][], limit: number): HubModel[]
 async function retrieveModelMetadata(model: HubModel, fetcher: FetchLike, refreshSignal: AbortSignal, requestTimeoutMs: number): Promise<HubModel | undefined> {
   try {
     const detailed = normalizeHubModel(await fetchJson(modelInfoUrl(model.id), fetcher, refreshSignal, "Hugging Face", requestTimeoutMs));
-    return detailed?.sha ? detailed : undefined;
+    // The response body is untrusted independently of the URL that produced it.
+    // Do not let a detail endpoint substitute another safe-looking repository
+    // and bypass the bounded discovery sample or its format/author filters.
+    return detailed?.id === model.id && detailed.sha ? detailed : undefined;
   } catch (error) {
     // The overall refresh deadline invalidates the entire sample. A request
     // timeout or ordinary repository failure remains isolated to that one repo.
@@ -449,14 +452,20 @@ export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeo
     // feeds while keeping the detail crawl bounded to twenty repositories per
     // format.
     const listBase = `${HUB_BASE}?full=true&limit=20&direction=-1`;
-    const [popularGguf, recentGguf, popularMlx, recentMlx] = await Promise.all([
+    const [popularGgufResult, recentGgufResult, popularMlxResult, recentMlxResult] = await Promise.allSettled([
       fetchJson(`${listBase}&sort=downloads&filter=gguf`, fetcher, refreshController.signal, "Hugging Face", requestTimeoutMs).then(parseHubModelList),
       fetchJson(`${listBase}&sort=lastModified&filter=gguf`, fetcher, refreshController.signal, "Hugging Face", requestTimeoutMs).then(parseHubModelList),
       fetchJson(`${listBase}&sort=downloads&author=mlx-community`, fetcher, refreshController.signal, "Hugging Face", requestTimeoutMs).then(parseHubModelList),
       fetchJson(`${listBase}&sort=lastModified&author=mlx-community`, fetcher, refreshController.signal, "Hugging Face", requestTimeoutMs).then(parseHubModelList),
     ]);
-    const ggufList = interleaveUnique([popularGguf, recentGguf], 20);
-    const mlxList = interleaveUnique([popularMlx, recentMlx], 20);
+    refreshController.signal.throwIfAborted();
+    const successfulLists = (format: Artifact["format"], results: PromiseSettledResult<HubModel[]>[]) => {
+      const lists = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+      if (!lists.length) throw new Error(`Hugging Face ${format} discovery feeds were unavailable`);
+      return lists;
+    };
+    const ggufList = interleaveUnique(successfulLists("gguf", [popularGgufResult, recentGgufResult]), 20);
+    const mlxList = interleaveUnique(successfulLists("mlx", [popularMlxResult, recentMlxResult]), 20);
     // List responses contain filenames but no byte sizes. Fetch each selected
     // repository's blob metadata before normalizing, otherwise conservative size
     // validation would exclude every artifact. Both formats share one upstream

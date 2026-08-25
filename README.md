@@ -77,14 +77,17 @@ and the API returns `503`.
 
 Each framework-cached refresh uses four Hugging Face `full=true` list responses (20 popular
 and 20 recently updated repositories filtered by the GGUF format, plus the same two samples from
-`mlx-community`), then requests each selected
-repository's `blobs=true` metadata before normalizing it. There are no
+`mlx-community`). A refresh tolerates either the popular or recent request failing
+within a format, but requires at least one valid discovery response for both GGUF
+and MLX. It then requests each selected repository's `blobs=true` metadata and
+normalizes the verified responses. There are no
 non-Hugging-Face catalogue requests. MLX sizes represent the complete snapshot
 download and are rejected when any repository file has an unknown size; imports
 may also need temporary free disk space beyond the displayed download size.
 Repository IDs must match Hugging Face's bounded `owner/name` grammar, and each
-detail response must supply a canonical 40-character commit hash before its
-artifacts can enter the production catalogue. Parameter metadata is retained
+detail response must repeat the exact requested repository ID and supply a
+canonical 40-character commit hash before its artifacts can enter the production
+catalogue. Parameter metadata is retained
 only when the exact artifact size is plausible for its declared quantization or
 precision, using a conservative Q2 floor when precision is unknown.
 Adapter-only LoRA, QLoRA, and PEFT repositories are not treated as runnable MLX
