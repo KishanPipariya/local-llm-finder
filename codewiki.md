@@ -171,6 +171,8 @@ Normalization excludes unknown, non-integer, and smaller-than-100 MB artifacts.
   evidence by themselves; otherwise the repository is counted as an unsupported
   artifact. At most 64 valid GGUF files are retained from one repository so an
   unusually large upstream repository cannot expand ranking work without bound.
+  The deterministic sample preserves represented quantizations and spans each
+  represented group's size range before filling remaining slots.
   Its format is usable by Ollama, LM Studio, and llama.cpp when the installed
   runtime supports the model architecture. Ollama and LM Studio recipes use a
   fresh temporary staging directory because their import steps persist the
@@ -287,14 +289,14 @@ explicit tie-breakers, so an upstream list's order cannot change a shortlist.
 The recommendation result also includes an `exclusions` count by reason. Counts
 include candidates rejected during Hugging Face normalization, but never expose
 the rejected artifact metadata. The deterministic per-repository GGUF sampling
-cap is a catalogue bound rather than an incompatibility and is not included in
-exclusion counts. GGUF invalid-size exclusions are counted per
+cap is reported separately as `catalogueLimit`, rather than misclassifying valid
+files as incompatible. GGUF invalid-size exclusions are counted per
 file because each file is a separately recommendable artifact; MLX invalid-size
 exclusions are counted once per repository snapshot because MLX downloads the
 complete repository. The
 UI only exposes reasons with a non-zero count and offers safe next actions for
-disk, memory, context, unsupported-format, unsupported-artifact, and invalid-size
-constraints. Invalid sizes, incomplete files, and known non-chat tasks remain
+disk, memory, context, unsupported-format, unsupported-artifact, invalid-size,
+and catalogue-limit constraints. Invalid sizes, incomplete files, and known non-chat tasks remain
 excluded and are never shown as installable artifacts.
 
 ### Pace and memory language
@@ -323,8 +325,8 @@ for either GGUF or MLX makes the refresh unavailable.
 Because those list responses contain filenames but not reliable byte sizes, it
 then obtains each selected repository's `blobs=true` metadata with a bounded
 global concurrency of six in-flight requests across both formats. The shared
-mapper rejects non-integer, non-positive, or unsafe concurrency limits instead
-of returning an unprocessed sparse result. Each upstream response is capped at 8 MiB; normalized identifiers, paths, tags, and metadata strings have field and cardinality limits; one repository can retain at most 1 MiB of normalized text metadata; and a complete refresh can retain at most 8 MiB. Each repository is also capped at 20,000 metadata files before normalization. A repository that disappears or
+mapper and discovery interleaver reject non-integer, non-positive, or unsafe
+limits instead of returning incomplete results. Each upstream response is capped at 8 MiB; normalized identifiers, paths, tags, and metadata strings have field and cardinality limits; one repository can retain at most 1 MiB of normalized text metadata; and a complete refresh can retain at most 8 MiB. Each repository is also capped at 20,000 metadata files before normalization. A repository that disappears or
 fails during that second step, substitutes a different repository ID, or does
 not return a canonical commit hash, is
 excluded; its unverified files are never
@@ -336,9 +338,12 @@ replacing the last valid catalogue with a severely truncated one. Each request h
 production timeout, while a complete refresh has a 30-second deadline that aborts all
 outstanding work. Both limits are injectable at the retrieval boundary so timeout
 tests use millisecond-scale deadlines instead of waiting for production timers.
-Oversized upstream bodies are cancelled as best-effort cleanup, but refresh
-failure does not wait for the cancellation promise because a non-settling stream
-must not defeat the request or refresh deadline.
+Each body read is raced against the combined per-request and refresh signal, so a
+fetch implementation cannot satisfy the header request and then evade the
+deadline with a stalled body. Oversized or timed-out upstream bodies are
+cancelled as best-effort cleanup, but refresh failure does not wait for the
+cancellation promise because a non-settling stream must not defeat the request
+or refresh deadline.
 A refresh-controller abort fails the complete refresh
 atomically so the last valid local catalogue can be served as stale. An empty
 usable catalogue for either GGUF or MLX also fails the full refresh, preventing a
@@ -346,7 +351,9 @@ successful partial feed from replacing a catalogue that supports all runtimes.
 List normalization also fails a feed when more than half of its raw entries are
 malformed, so normalization cannot hide a materially truncated upstream sample
 from the later completeness checks.
-Normalization retains at most 64 deterministic GGUF variants per repository.
+Normalization retains at most 64 deterministic GGUF variants per repository,
+preserving quantization and size diversity and counting valid omitted files
+under `catalogueLimit`.
 
 Next.js Cache Components' `use cache` directive wraps the complete production
 refresh with a six-hour revalidation interval. `CatalogueCache` holds the last

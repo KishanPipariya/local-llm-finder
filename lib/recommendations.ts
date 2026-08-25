@@ -56,7 +56,7 @@ export type RecommendationExplanation = {
   familyKey: string;
 };
 
-export type ExclusionReason = "insufficientDisk" | "insufficientMemory" | "insufficientContext" | "invalidSize" | "unsupportedFormat" | "unsupportedArtifact";
+export type ExclusionReason = "insufficientDisk" | "insufficientMemory" | "insufficientContext" | "invalidSize" | "unsupportedFormat" | "unsupportedArtifact" | "catalogueLimit";
 export type ExclusionSummary = Record<ExclusionReason, number>;
 export type RankingResult = { recommendations: Recommendation[]; exclusions: ExclusionSummary };
 
@@ -199,7 +199,7 @@ function compareArtifactIdentity(a: Artifact, b: Artifact) {
 }
 
 function emptyExclusions(): ExclusionSummary {
-  return { insufficientDisk: 0, insufficientMemory: 0, insufficientContext: 0, invalidSize: 0, unsupportedFormat: 0, unsupportedArtifact: 0 };
+  return { insufficientDisk: 0, insufficientMemory: 0, insufficientContext: 0, invalidSize: 0, unsupportedFormat: 0, unsupportedArtifact: 0, catalogueLimit: 0 };
 }
 
 function shellQuote(value: string) {

@@ -326,6 +326,21 @@ test("upstream JSON responses are bounded before parsing", async () => {
   ]);
 });
 
+test("upstream response-body reads obey the request deadline", async () => {
+  const stalled = new Response(new ReadableStream<Uint8Array>({
+    pull() { return new Promise<void>(() => undefined); },
+    cancel() { return new Promise<void>(() => undefined); },
+  }));
+  await Promise.race([
+    assert.rejects(fetchJson("https://example.test/metadata", async () => stalled, new AbortController().signal, "Catalogue", 5), /timeout|aborted/i),
+    new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("response body outlived its deadline")), 100)),
+  ]);
+
+  const aborted = new AbortController();
+  aborted.abort(new Error("refresh stopped"));
+  await assert.rejects(fetchJson("https://example.test/metadata", async () => new Response("{}"), aborted.signal, "Catalogue"), /refresh stopped/);
+});
+
 test("catalogue excludes non-chat tasks and non-standalone GGUF files", () => {
   const multimodal = { id: "org/Vision-GGUF", pipeline_tag: "image-text-to-text", siblings: [{ rfilename: "vision.gguf", size: 4_000_000_000 }] };
   assert.deepEqual(normalizeModels([multimodal], "gguf"), []);
@@ -370,9 +385,30 @@ test("catalogue excludes non-chat tasks and non-standalone GGUF files", () => {
 
 test("GGUF normalization caps repository variants before ranking", () => {
   const siblings = Array.from({ length: 100 }, (_, index) => ({ rfilename: `model-${String(index).padStart(3, "0")}.Q4_K_M.gguf`, size: 100_000_000 + index }));
-  const artifacts = normalizeModels([{ id: "org/Bulk-GGUF", pipeline_tag: "text-generation", siblings }], "gguf");
+  const model = { id: "org/Bulk-GGUF", pipeline_tag: "text-generation", siblings };
+  const artifacts = normalizeModels([model], "gguf");
   assert.equal(artifacts.length, 64);
-  assert.deepEqual(artifacts.map((artifact) => artifact.filename), siblings.slice(0, 64).map((file) => file.rfilename));
+  assert.equal(artifacts[0].filename, siblings[0].rfilename);
+  assert.equal(artifacts.at(-1)?.filename, siblings.at(-1)?.rfilename, "the sample preserves the repository's size range");
+  assert.deepEqual(normalizationExclusions([model], "gguf"), { catalogueLimit: 36 });
+
+  const crowded = [...siblings, { rfilename: "model.Q8_0.gguf", size: 8_000_000_000 }];
+  assert.ok(normalizeModels([{ ...model, siblings: crowded }], "gguf").some((artifact) => artifact.quantization === "Q8_0"), "a crowded low-bit group cannot displace another quantization");
+
+  const manyQuantizations = Array.from({ length: 80 }, (_, index) => ({ rfilename: `model.Q4_VARIANT${String(index).padStart(2, "0")}.gguf`, size: 100_000_000 + index }));
+  const sampledQuantizations = normalizeModels([{ ...model, siblings: manyQuantizations }], "gguf");
+  assert.equal(sampledQuantizations.length, 64);
+  assert.equal(sampledQuantizations[0].filename, manyQuantizations[0].rfilename);
+  assert.equal(sampledQuantizations.at(-1)?.filename, manyQuantizations.at(-1)?.rfilename);
+
+  const sixtyThreeGroups = Array.from({ length: 63 }, (_, index) => [
+    { rfilename: `model.Q4_GROUP${String(index).padStart(2, "0")}.small.gguf`, size: 100_000_000 + index },
+    { rfilename: `model.Q4_GROUP${String(index).padStart(2, "0")}.large.gguf`, size: 200_000_000 + index },
+  ]).flat();
+  assert.equal(normalizeModels([{ ...model, siblings: sixtyThreeGroups }], "gguf").length, 64, "one remaining slot is distributed without dropping a represented group");
+
+  const unsupportedCrowd = { ...model, pipeline_tag: "image-text-to-text", siblings };
+  assert.deepEqual(normalizationExclusions([unsupportedCrowd], "gguf"), { unsupportedArtifact: 100 });
 });
 
 function upstream(options: { unavailableModel?: string } = {}) {
@@ -531,6 +567,9 @@ test("interleaves popular and recent feeds without duplicate repositories", () =
   const popular = [{ id: "org/Popular" }, { id: "org/Shared" }, { id: "org/Popular-2" }];
   const recent = [{ id: "org/Recent" }, { id: "org/Shared" }];
   assert.deepEqual(interleaveUnique([popular, recent], 4).map((model) => model.id), ["org/Popular", "org/Recent", "org/Shared", "org/Popular-2"]);
+  for (const invalidLimit of [0, -1, Number.NaN, 1.5]) {
+    assert.throws(() => interleaveUnique([popular, recent], invalidLimit), /positive safe integer/);
+  }
 });
 
 test("catalogue refresh tolerates one failed discovery feed per format", async () => {

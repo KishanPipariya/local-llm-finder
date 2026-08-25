@@ -334,6 +334,42 @@ function quantizationOf(filename: string) {
   return match?.[1]?.toUpperCase();
 }
 
+function evenlySpaced<T>(values: readonly T[], limit: number): T[] {
+  if (values.length <= limit) return [...values];
+  if (limit === 1) return [values[Math.floor((values.length - 1) / 2)]];
+  return Array.from({ length: limit }, (_, index) => values[Math.round(index * (values.length - 1) / (limit - 1))]);
+}
+
+function selectedGgufFiles(files: HubFile[]) {
+  const valid = validGgufFiles(files);
+  if (valid.length <= MAX_GGUF_ARTIFACTS_PER_REPOSITORY) return valid;
+
+  const groups = new Map<string, HubFile[]>();
+  for (const file of valid) {
+    const key = quantizationOf(file.rfilename) ?? "unknown";
+    const group = groups.get(key) ?? [];
+    group.push(file);
+    groups.set(key, group);
+  }
+  const orderedGroups = [...groups.entries()].sort(([, left], [, right]) => left[0].size! - right[0].size!
+    || left[0].rfilename.localeCompare(right[0].rfilename));
+  const retainedGroups = orderedGroups.length > MAX_GGUF_ARTIFACTS_PER_REPOSITORY
+    ? evenlySpaced(orderedGroups, MAX_GGUF_ARTIFACTS_PER_REPOSITORY)
+    : orderedGroups;
+  const selected = new Map(retainedGroups.map(([, group]) => [group[0].rfilename, group[0]]));
+  let remainingSlots = MAX_GGUF_ARTIFACTS_PER_REPOSITORY - selected.size;
+  if (remainingSlots > 0) {
+    const endpoints = retainedGroups.map(([, group]) => group.at(-1)!).filter((file) => !selected.has(file.rfilename));
+    for (const file of evenlySpaced(endpoints, Math.min(remainingSlots, endpoints.length))) selected.set(file.rfilename, file);
+    remainingSlots = MAX_GGUF_ARTIFACTS_PER_REPOSITORY - selected.size;
+  }
+  if (remainingSlots > 0) {
+    const remaining = valid.filter((file) => !selected.has(file.rfilename));
+    for (const file of evenlySpaced(remaining, remainingSlots)) selected.set(file.rfilename, file);
+  }
+  return [...selected.values()].sort((a, b) => a.size! - b.size! || a.rfilename.localeCompare(b.rfilename));
+}
+
 function minimumBytesPerB(quantization: string | undefined) {
   const normalized = quantization?.toUpperCase();
   const quantized = normalized?.match(/^(?:I?Q)([2-8])/);
@@ -392,8 +428,9 @@ export function normalizeModels(models: HubModel[], format: Artifact["format"]):
     const matched = format === "gguf" ? files.filter((file) => /\.gguf$/i.test(file.rfilename)) : files;
     // A repository can publish thousands of individually valid GGUF files.
     // Keep the cached catalogue and per-request ranking work bounded while
-    // retaining a generous deterministic set of the smallest variants.
-    const selectedFiles = format === "gguf" ? validGgufFiles(matched).slice(0, MAX_GGUF_ARTIFACTS_PER_REPOSITORY) : [undefined];
+    // retaining a deterministic sample across quantizations and the available
+    // size range instead of allowing many tiny variants to crowd out the rest.
+    const selectedFiles = format === "gguf" ? selectedGgufFiles(matched) : [undefined];
     if (format === "gguf" && !selectedFiles.length) return [];
     // `hf download` snapshots the repository. Count every file, including files
     // not recognised as runtime assets, and reject unknown sizes so disk-fit
@@ -447,8 +484,10 @@ export function normalizationExclusions(models: HubModel[], format: Artifact["fo
       const invalidFiles = matched.filter((file) => isStandaloneGguf(file) && !validSize(file.size)).length;
       const validStandaloneFiles = matched.length - nonStandaloneFiles - invalidFiles;
       const unsupportedFiles = nonStandaloneFiles + (isSupportedTask(model) ? 0 : validStandaloneFiles);
+      const cappedFiles = isSupportedTask(model) ? Math.max(0, validStandaloneFiles - MAX_GGUF_ARTIFACTS_PER_REPOSITORY) : 0;
       if (unsupportedFiles) counts.unsupportedArtifact = (counts.unsupportedArtifact ?? 0) + unsupportedFiles;
       if (invalidFiles) counts.invalidSize = (counts.invalidSize ?? 0) + invalidFiles;
+      if (cappedFiles) counts.catalogueLimit = (counts.catalogueLimit ?? 0) + cappedFiles;
     } else if (format === "mlx") {
       // MLX is downloaded as one repository snapshot, so its exclusion stays
       // at repository level. Missing weights are an unsupported artifact;
@@ -463,6 +502,7 @@ export function normalizationExclusions(models: HubModel[], format: Artifact["fo
 export { mapWithConcurrency } from "./catalogue-request";
 
 export function interleaveUnique(lists: HubModel[][], limit: number): HubModel[] {
+  if (!Number.isSafeInteger(limit) || limit < 1) throw new RangeError("Interleave limit must be a positive safe integer");
   const selected: HubModel[] = [];
   const seen = new Set<string>();
   const maxLength = lists.reduce((maximum, list) => Math.max(maximum, list.length), 0);
@@ -557,6 +597,7 @@ export async function retrieveCatalogue(fetcher: FetchLike = fetch, refreshTimeo
         invalidSize: (ggufExclusions.invalidSize ?? 0) + (mlxExclusions.invalidSize ?? 0),
         unsupportedFormat: (ggufExclusions.unsupportedFormat ?? 0) + (mlxExclusions.unsupportedFormat ?? 0),
         unsupportedArtifact: (ggufExclusions.unsupportedArtifact ?? 0) + (mlxExclusions.unsupportedArtifact ?? 0),
+        catalogueLimit: (ggufExclusions.catalogueLimit ?? 0) + (mlxExclusions.catalogueLimit ?? 0),
       },
     };
   } finally {

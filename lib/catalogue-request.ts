@@ -23,7 +23,16 @@ export function requestSignal(refreshSignal: AbortSignal, requestTimeoutMs = REQ
   return AbortSignal.any([AbortSignal.timeout(requestTimeoutMs), refreshSignal]);
 }
 
-async function readBoundedText(response: Response, source: string): Promise<string> {
+function readWithSignal(reader: ReadableStreamDefaultReader<Uint8Array>, signal: AbortSignal) {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? new DOMException("Upstream response read aborted", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+    reader.read().then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+
+async function readBoundedText(response: Response, source: string, signal: AbortSignal): Promise<string> {
   const declaredLength = response.headers.get("content-length");
   if (declaredLength !== null && Number.isSafeInteger(Number(declaredLength)) && Number(declaredLength) > MAX_RESPONSE_BYTES) {
     if (response.body) cancelWithoutWaiting(response.body);
@@ -36,7 +45,7 @@ async function readBoundedText(response: Response, source: string): Promise<stri
   let total = 0;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await readWithSignal(reader, signal);
       if (done) break;
       if (!value) continue;
       total += value.byteLength;
@@ -46,8 +55,11 @@ async function readBoundedText(response: Response, source: string): Promise<stri
       }
       chunks.push(value);
     }
+  } catch (error) {
+    cancelWithoutWaiting(reader, error);
+    throw error;
   } finally {
-    reader.releaseLock();
+    try { reader.releaseLock(); } catch { /* Cancellation will release pending reads. */ }
   }
 
   const bytes = new Uint8Array(total);
@@ -60,9 +72,10 @@ async function readBoundedText(response: Response, source: string): Promise<stri
 }
 
 export async function fetchJson(url: string, fetcher: FetchLike, refreshSignal: AbortSignal, source: string, requestTimeoutMs = REQUEST_TIMEOUT_MS): Promise<unknown> {
-  const response = await fetcher(url, { signal: requestSignal(refreshSignal, requestTimeoutMs) });
+  const signal = requestSignal(refreshSignal, requestTimeoutMs);
+  const response = await fetcher(url, { signal });
   if (!response.ok) throw new Error(`${source} request failed (${response.status})`);
-  return JSON.parse(await readBoundedText(response, source));
+  return JSON.parse(await readBoundedText(response, source, signal));
 }
 
 export async function mapWithConcurrency<T, R>(values: readonly T[], limit: number, worker: (value: T) => Promise<R>): Promise<R[]> {

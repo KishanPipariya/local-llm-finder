@@ -36,6 +36,7 @@ test("recommendation service translates catalogue failures and merges catalogue 
   assert.equal(result.recommendations.length, 1);
   assert.equal(result.exclusions.invalidSize, 2);
   assert.equal(result.exclusions.unsupportedArtifact, 1);
+  assert.equal(result.exclusions.catalogueLimit, 0);
 
   await assert.rejects(
     getRecommendations(mac, async () => { throw new Error("offline"); }),
@@ -478,7 +479,7 @@ test("request deadlines abort cold-start requests and preserve the unavailable r
   assert.equal((await deadlineHandler(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify(mac) }))).status, 503);
 });
 test("API preserves status codes and returns typed input errors", async () => {
-  const response = { recommendations: [], exclusions: { insufficientDisk: 0, insufficientMemory: 0, insufficientContext: 0, invalidSize: 0, unsupportedFormat: 0, unsupportedArtifact: 0 }, refreshedAt: "2026-08-01T00:00:00Z", stale: true };
+  const response = { recommendations: [], exclusions: { insufficientDisk: 0, insufficientMemory: 0, insufficientContext: 0, invalidSize: 0, unsupportedFormat: 0, unsupportedArtifact: 0, catalogueLimit: 0 }, refreshedAt: "2026-08-01T00:00:00Z", stale: true };
   const handler = createPostHandler(async () => response);
   const invalid = await handler(new Request("http://test/api/recommendations", { method: "POST", body: JSON.stringify({ chip: "m4", memoryGb: 99, diskGb: 0, workload: "nope" }) }));
   assert.equal(invalid.status, 400); assert.ok((await invalid.json()).fieldErrors);

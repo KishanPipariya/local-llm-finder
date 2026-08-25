@@ -49,7 +49,7 @@ POST /api/recommendations ┘                                      └───�
 }
 ```
 
-A successful response returns the existing recommendation result object, including `recommendations`, `exclusions`, and `stale`. Exclusions include disk, memory, verified-context, invalid-size, unsupported-format, and unsupported-artifact counts. Invalid configurations return `400` with `errors` and `fieldErrors`; a catalogue outage with no cached result returns `503` with `error`. JSON request bodies are limited to 32 KiB and five seconds of body-read time before parsing. The GET-only `runtime=any` choice represents the legacy runtime-neutral preference; the JSON API accepts only concrete runtime names.
+A successful response returns the existing recommendation result object, including `recommendations`, `exclusions`, and `stale`. Exclusions include disk, memory, verified-context, invalid-size, unsupported-format, unsupported-artifact, and catalogue-limit counts. Invalid configurations return `400` with `errors` and `fieldErrors`; a catalogue outage with no cached result returns `503` with `error`. JSON request bodies are limited to 32 KiB and five seconds of body-read time before parsing. The GET-only `runtime=any` choice represents the legacy runtime-neutral preference; the JSON API accepts only concrete runtime names.
 
 Hugging Face GGUF files use import-based Ollama guidance; the finder never
 emits `ollama pull` for an arbitrary Hugging Face file. Human-facing source links
@@ -113,7 +113,11 @@ whose workflow does not fit are removed individually instead of excluding an
 artifact that remains usable through another GGUF runtime. Missing task metadata
 requires explicit text, chat, or coding evidence rather than a repository format,
 author, or model family name. A refresh must retain at least one usable GGUF and
-MLX artifact, and each repository contributes at most 64 deterministic GGUF variants.
+MLX artifact, and each repository contributes at most 64 deterministic GGUF
+variants sampled across represented quantizations and sizes. Valid variants
+omitted by that operational cap are reported separately in the exclusion
+summary. Upstream body reads remain subject to their request deadline even after
+response headers arrive.
 
 ## Run locally
 
