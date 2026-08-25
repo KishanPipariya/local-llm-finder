@@ -158,7 +158,10 @@ fit Hugging Face's 96-character bound, use only its supported identifier charact
 exclude forbidden edge, repeated punctuation, and `.git` suffixes.
 Repository paths must also contain well-formed Unicode and no bidirectional
 control characters before URL or installation-guidance generation. Unsafe
-directional controls are omitted from optional display metadata.
+directional controls, malformed Unicode, and control characters are omitted
+from optional display and identity metadata, including safetensors
+parameter-group names. Bounded, non-rendered GGUF chat templates may retain tabs
+and line breaks while other controls remain invalid.
 Normalization excludes unknown, non-integer, and smaller-than-100 MB artifacts.
 
 - GGUF: retain every valid, standalone Hugging Face `.gguf` file as a separate
@@ -261,9 +264,10 @@ tolerance still applies when the other MLX feed is valid.
 The ranking score combines parameter metadata when available, workload fit, a
 qualitative pace factor, a small bounded update-recency signal, and download
 popularity. Download footprint is never treated as a parameter-count proxy.
-It keeps the highest-ranked representative of
-each repository/format/quantization variant, preserving distinct fine-tunes
-that declare the same base model. It prioritizes one
+It keeps the highest-ranked representative of each exact artifact/format
+variant, preserving distinct fine-tunes that declare the same base model and
+distinct GGUF files in one repository even when they share a quantization label.
+Exact duplicate artifacts are collapsed. It prioritizes one
 representative from each family before adding additional variants, and returns at most ten results. Every returned
 recommendation includes typed fit checks (disk and memory headroom, verified or
 unknown context capacity, likely format-derived runtimes and their unverified-

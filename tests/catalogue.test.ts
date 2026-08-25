@@ -35,15 +35,17 @@ test("normalization rejects unsafe catalogue paths before generating artifacts",
   assert.deepEqual(normalizeModels([{ id: "org/Unsafe-GGUF", siblings: [{ rfilename: "../../outside.gguf", size: 4_000_000_000 }] }], "gguf"), []);
 });
 
-test("normalization discards unsafe directional metadata without rejecting safe artifacts", () => {
+test("normalization discards unsafe directional and control metadata without rejecting safe artifacts", () => {
   const model = normalizeHubModel({
     ...listedModel,
-    cardData: { license: "Apache-2.0\u202Etxt.exe", model_name: "Safe model" },
-    tags: ["chat", "coding\u2066hidden"],
+    library_name: "gguf\nspoofed",
+    cardData: { license: "Apache-2.0\u202Etxt.exe", model_name: "Unsafe\u0000model", base_model: "Base\rModel" },
+    tags: ["chat", "coding\u2066hidden", "unsafe\ntag"],
   });
   assert.ok(model);
+  assert.equal(model.library_name, undefined);
   assert.equal(model.cardData?.license, undefined);
-  assert.equal(model.cardData?.model_name, "Safe model");
+  assert.equal(model.cardData, undefined);
   assert.deepEqual(model.tags, ["chat"]);
 });
 
@@ -104,7 +106,7 @@ test("normalization keeps only canonical commit revisions", () => {
 test("normalizes standard Hugging Face GGUF metadata", () => {
   const model = {
     id: "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF",
-    gguf: { total: 7_615_616_512, chat_template: "{{ messages }}", context_length: 32768 },
+    gguf: { total: 7_615_616_512, chat_template: "{% for message in messages %}\n{{ message }}\n{% endfor %}", context_length: 32768 },
     cardData: { base_model: "Qwen/Qwen2.5-Coder-7B-Instruct" },
     siblings: [{ rfilename: "qwen.Q4_K_M.gguf", size: 4_000_000_000 }],
   };
@@ -164,6 +166,15 @@ test("safetensors parameter groups are discarded atomically when any count is in
   assert.equal(normalized?.safetensors?.total, undefined);
   assert.ok(normalized);
   assert.equal(normalizeModels([normalized], "gguf")[0].paramsB, undefined, "invalid groups cannot cancel a spoofed parameter total into a plausible value");
+});
+
+test("safetensors parameter groups reject unsafe control characters in group names", () => {
+  const model = normalizeHubModel({
+    ...listedMlxModel,
+    safetensors: { parameters: { BF16: 7_000_000_000, "spoofed\nBF16": 1 } },
+  });
+  assert.ok(model);
+  assert.equal(model.safetensors, undefined);
 });
 
 test("zero or overflowing safetensors totals do not suppress or create parameter metadata", () => {

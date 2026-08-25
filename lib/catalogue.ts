@@ -136,13 +136,31 @@ function asString(value: unknown): string | undefined {
 
 const hasUnsafeUnicode = (value: string) => !value.isWellFormed()
   || /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u.test(value);
+const hasUnsafeControlCharacter = (value: string) => /[\u0000-\u001F\u007F]/.test(value);
 
 function asBoundedString(value: unknown, maxLength = MAX_METADATA_STRING_CHARS): string | undefined {
   const candidate = asString(value);
-  return candidate !== undefined && candidate.length <= maxLength && !hasUnsafeUnicode(candidate) ? candidate : undefined;
+  return candidate !== undefined
+    && candidate.length <= maxLength
+    && !hasUnsafeUnicode(candidate)
+    && !hasUnsafeControlCharacter(candidate)
+    ? candidate
+    : undefined;
 }
 
-const hasUnsafeControlCharacter = (value: string) => /[\u0000-\u001F\u007F]/.test(value);
+function asBoundedTemplate(value: unknown): string | undefined {
+  const candidate = asString(value);
+  // Chat templates are structured, non-rendered metadata and commonly contain
+  // tabs and line breaks. Retain those layout characters while rejecting every
+  // other control character plus the Unicode hazards shared by display strings.
+  return candidate !== undefined
+    && candidate.length <= MAX_METADATA_STRING_CHARS
+    && !hasUnsafeUnicode(candidate)
+    && !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(candidate)
+    ? candidate
+    : undefined;
+}
+
 const isSafeRelativePath = (value: string) => {
   if (!value || value.length > MAX_PATH_CHARS || hasUnsafeUnicode(value) || hasUnsafeControlCharacter(value) || value.startsWith("/")) return false;
   return value.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
@@ -205,7 +223,7 @@ function normalizeGguf(value: unknown): HubModel["gguf"] | undefined {
   const gguf = asRecord(value);
   if (!gguf) return undefined;
   const total = asFiniteNumber(gguf.total);
-  const chatTemplate = asBoundedString(gguf.chat_template);
+  const chatTemplate = asBoundedTemplate(gguf.chat_template);
   const contextLength = asFiniteNumber(gguf.context_length);
   return total === undefined && chatTemplate === undefined && contextLength === undefined ? undefined : { total, chat_template: chatTemplate, context_length: contextLength };
 }
@@ -223,7 +241,7 @@ function normalizeSafetensors(value: unknown): HubModel["safetensors"] | undefin
   const validParameterEntries = parameterEntries
     && parameterEntries.length > 0
     && parameterEntries.length <= MAX_PARAMETER_GROUPS
-    && parameterEntries.every(([key, candidate]) => key.length <= MAX_TAG_CHARS && asParameterCount(candidate) !== undefined);
+    && parameterEntries.every(([key, candidate]) => asBoundedString(key, MAX_TAG_CHARS) !== undefined && asParameterCount(candidate) !== undefined);
   const parameters = validParameterEntries
     ? Object.fromEntries(parameterEntries.map(([key, candidate]) => [key, asParameterCount(candidate)!]))
     : undefined;

@@ -188,11 +188,11 @@ function familyKey(item: Artifact) {
 }
 
 function variantKey(item: Recommendation) {
-  // Quantization labels identify variants within one converted repository, but
-  // separate repositories can be distinct fine-tunes of the same base model.
-  // Preserve that repository identity while still collapsing duplicate entries
-  // for an identical published variant.
-  return `${item.modelId}|${item.format}|${item.quantization ?? item.filename ?? item.id}`;
+  // The exact artifact ID includes the GGUF filename. A repository can publish
+  // multiple distinct files with the same quantization label, so quantization
+  // alone is not a safe identity key. Repeated copies of the same normalized
+  // artifact still collapse deterministically.
+  return `${item.id}|${item.format}`;
 }
 
 function compareArtifactIdentity(a: Artifact, b: Artifact) {

@@ -108,9 +108,10 @@ maps are discarded atomically, and group sums must remain safe integers. Split
 GGUF files with numeric `N-of-M` suffixes are excluded rather than being presented as
 standalone downloads. Normalized metadata has per-field, per-repository, and whole-refresh
 size limits in addition to the upstream response-size bound. Repository paths
-reject malformed Unicode and bidirectional controls before URL or shell guidance
-generation; unsafe directional controls are also discarded from optional display
-metadata. GGUF
+reject malformed Unicode, bidirectional controls, and control characters before
+URL or shell guidance generation; the same unsafe characters are discarded from
+optional display and identity metadata. Bounded GGUF chat templates may retain
+their expected tabs and line breaks but reject other controls. GGUF
 results that can fit Ollama reserve a larger operational disk estimate for the
 download and temporary import copy. With the runtime-neutral option, runtimes
 whose workflow does not fit are removed individually instead of excluding an
@@ -123,7 +124,9 @@ omitted by that operational cap are reported separately in the exclusion
 summary. Upstream body reads remain subject to their request deadline even after
 response headers arrive. Ranking preserves separately published fine-tunes even
 when they declare the same base model and quantization, while still prioritizing
-one result from each normalized model family before additional variants.
+one result from each normalized model family before additional variants. Exact
+artifact identity preserves separate GGUF files even when one repository gives
+them the same quantization label, while exact duplicates are collapsed.
 
 ## Run locally
 

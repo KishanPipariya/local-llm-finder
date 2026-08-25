@@ -6,7 +6,7 @@ import { chipProfiles, runtimes, validateConfig, type MacConfig } from "../lib/h
 import { CatalogueCache, isFresh } from "../lib/catalogue-cache";
 import { normalizationExclusions, normalizeModels, REFRESH_TIMEOUT_MS, retrieveCatalogue } from "../lib/catalogue";
 import { createPostHandler } from "../app/api/recommendations/route";
-import { CatalogueUnavailableError, getRecommendations } from "../lib/recommendation-service";
+import { CatalogueUnavailableError, getRecommendations, mergeExclusions } from "../lib/recommendation-service";
 
 const mac: MacConfig = { chip: "m4", memoryGb: 16, diskGb: 40, workload: "coding" };
 const gguf: Artifact = { id: "org/Coder-7B-GGUF/model.Q4_K_M.gguf", modelId: "org/Coder-7B-GGUF", title: "Coder 7B", format: "gguf", sizeBytes: 5_000_000_000, sizeGb: 5, paramsB: 7, downloads: 3000, updatedAt: "2026-08-01T00:00:00Z", gated: false, tags: ["code"], repositoryUrl: "https://huggingface.co/org/Coder-7B-GGUF", sourceUrl: "https://huggingface.co/org/Coder-7B-GGUF/resolve/main/model.Q4_K_M.gguf", filename: "model.Q4_K_M.gguf" };
@@ -44,6 +44,15 @@ test("recommendation service translates catalogue failures and merges catalogue 
       && error.cause instanceof Error
       && error.cause.message === "offline",
   );
+});
+test("catalogue exclusion merging does not mutate ranking results", () => {
+  const ranking = { insufficientDisk: 1, insufficientMemory: 2, insufficientContext: 3, invalidSize: 4, unsupportedFormat: 5, unsupportedArtifact: 6, catalogueLimit: 7 };
+  const before = { ...ranking };
+  const merged = mergeExclusions(ranking, { invalidSize: 2, unsupportedArtifact: 1 });
+  assert.notEqual(merged, ranking);
+  assert.deepEqual(ranking, before);
+  assert.deepEqual(merged, { ...before, invalidSize: 6, unsupportedArtifact: 7 });
+  assert.notEqual(mergeExclusions(ranking, undefined), ranking, "even a no-op merge returns an independent result");
 });
 test("uses conservative lower-bound bandwidth for configurable Max variants", () => {
   assert.equal(chipProfiles.m3Max.bandwidthGbps, 300);
@@ -280,6 +289,12 @@ test("keeps multiple GGUF quantization variants from one model family", () => {
   const ranked = rankArtifacts([q4, q8], mac);
   assert.deepEqual(ranked.map((item) => item.quantization).sort(), ["Q4_K_M", "Q8_0"]);
   assert.equal(ranked[0].quantization, "Q8_0", "higher precision wins when both variants fit");
+});
+test("keeps distinct GGUF artifacts that share a repository and quantization label", () => {
+  const alpha = { ...gguf, id: "org/Coder-7B-GGUF/alpha.Q4_K_M.gguf", filename: "alpha.Q4_K_M.gguf", quantization: "Q4_K_M" };
+  const beta = { ...alpha, id: "org/Coder-7B-GGUF/beta.Q4_K_M.gguf", filename: "beta.Q4_K_M.gguf", sizeBytes: 5_200_000_000, sizeGb: 5.2 };
+  const ranked = rankArtifacts([alpha, beta, { ...alpha }], mac);
+  assert.deepEqual(ranked.map((item) => item.filename).sort(), ["alpha.Q4_K_M.gguf", "beta.Q4_K_M.gguf"]);
 });
 test("excludes known context-incompatible artifacts and explains unknown limits", () => {
   const shortOnly = { ...gguf, maxContextTokens: 4096 };
