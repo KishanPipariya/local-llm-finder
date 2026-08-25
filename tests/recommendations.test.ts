@@ -261,7 +261,7 @@ test("returns typed fit explanations and actionable exclusion categories", () =>
   assert.ok(result.recommendations[0].explanation.rankingFactors.length >= 3);
 });
 test("normalizes exact GGUF and aggregate MLX artifact sizes", () => {
-  const model = { id: "org/Test-GGUF", sha: "immutable-revision", pipeline_tag: "text-generation", config: { max_position_embeddings: 32768 }, siblings: [{ rfilename: "large.Q8.gguf", size: 8_000_000_000 }, { rfilename: "small.Q4_K_M.gguf", size: 4_000_000_001 }, { rfilename: "weights.safetensors", size: 3_000_000_000 }, { rfilename: "config.json", size: 12_000 }, { rfilename: "tokenizer.json", size: 8_000 }, { rfilename: "README.md", size: 900_000_000 }] };
+  const model = { id: "org/Test-GGUF", sha: "immutable-revision", library_name: "mlx", pipeline_tag: "text-generation", config: { max_position_embeddings: 32768 }, siblings: [{ rfilename: "large.Q8.gguf", size: 8_000_000_000 }, { rfilename: "small.Q4_K_M.gguf", size: 4_000_000_001 }, { rfilename: "weights.safetensors", size: 3_000_000_000 }, { rfilename: "config.json", size: 12_000 }, { rfilename: "tokenizer.json", size: 8_000 }, { rfilename: "README.md", size: 900_000_000 }] };
   const ggufArtifacts = normalizeModels([model], "gguf"); const mlxArtifact = normalizeModels([model], "mlx")[0];
   assert.deepEqual(ggufArtifacts.map((artifact) => [artifact.filename, artifact.quantization, artifact.sizeBytes]), [["small.Q4_K_M.gguf", "Q4_K_M", 4_000_000_001], ["large.Q8.gguf", "Q8", 8_000_000_000]]);
   assert.equal(mlxArtifact.sizeBytes, 15_900_020_001);
@@ -299,6 +299,14 @@ test("groups equivalent format conversions by base model family", () => {
   const ranked = rankArtifacts([ggufVariant, mlxVariant, alternative], { ...mac, runtime: undefined });
   assert.notEqual(ranked[0].explanation.familyKey, ranked[1].explanation.familyKey);
   assert.equal(ranked[0].explanation.familyKey, ranked[2].explanation.familyKey);
+});
+test("preserves distinct fine-tunes that share a base model and quantization", () => {
+  const shared = { ...gguf, baseModel: "Base/Shared-7B", quantization: "Q4_K_M", downloads: 1, tags: ["chat"] };
+  const finance = { ...shared, id: "org/Finance/model.Q4_K_M.gguf", modelId: "org/Finance", title: "Finance fine-tune" };
+  const medical = { ...shared, id: "org/Medical/model.Q4_K_M.gguf", modelId: "org/Medical", title: "Medical fine-tune" };
+  const ranked = rankArtifacts([finance, medical], { ...mac, workload: "chat" });
+  assert.deepEqual(ranked.map((item) => item.title), ["Finance fine-tune", "Medical fine-tune"]);
+  assert.equal(ranked[0].explanation.familyKey, ranked[1].explanation.familyKey, "shared family identity still informs shortlist diversity");
 });
 test("gives distinct model families priority over additional variants", () => {
   const familyVariant = (id: string, quantization: string, sizeBytes: number) => ({ ...gguf, id, modelId: "org/Popular-7B-GGUF", title: "Popular 7B", quantization, filename: `${quantization}.gguf`, sizeBytes, sizeGb: sizeBytes / 1e9, downloads: 100_000, tags: [] });

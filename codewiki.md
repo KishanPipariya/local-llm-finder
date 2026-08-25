@@ -156,6 +156,9 @@ is omitted. A repository containing any malformed file entry is rejected before
 complete MLX snapshot. Repository IDs must use exactly one owner/name separator,
 fit Hugging Face's 96-character bound, use only its supported identifier characters, and
 exclude forbidden edge, repeated punctuation, and `.git` suffixes.
+Repository paths must also contain well-formed Unicode and no bidirectional
+control characters before URL or installation-guidance generation. Unsafe
+directional controls are omitted from optional display metadata.
 Normalization excludes unknown, non-integer, and smaller-than-100 MB artifacts.
 
 - GGUF: retain every valid, standalone Hugging Face `.gguf` file as a separate
@@ -188,7 +191,8 @@ Normalization excludes unknown, non-integer, and smaller-than-100 MB artifacts.
   points to the human-facing Hugging Face file or repository viewer. Model
   context metadata is normalized to
   `maxContextTokens` when available.
-- MLX: require one complete `.safetensors` weight set using standard `model`,
+- MLX: require an explicit normalized `library_name: mlx` value or `mlx` tag,
+  then require one complete `.safetensors` weight set using standard `model`,
   `weights`, or `consolidated` filenames, a root `config.json`,
   self-contained tokenizer data (`tokenizer.json`, a supported tokenizer model,
   or the `vocab.json`/`merges.txt` pair), and an explicit supported pipeline or
@@ -258,7 +262,8 @@ The ranking score combines parameter metadata when available, workload fit, a
 qualitative pace factor, a small bounded update-recency signal, and download
 popularity. Download footprint is never treated as a parameter-count proxy.
 It keeps the highest-ranked representative of
-each normalized model-family/format/quantization variant, prioritizes one
+each repository/format/quantization variant, preserving distinct fine-tunes
+that declare the same base model. It prioritizes one
 representative from each family before adding additional variants, and returns at most ten results. Every returned
 recommendation includes typed fit checks (disk and memory headroom, verified or
 unknown context capacity, likely format-derived runtimes and their unverified-

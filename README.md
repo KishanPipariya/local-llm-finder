@@ -94,7 +94,8 @@ precision, using a conservative Q2 floor when precision is unknown.
 Adapter-only LoRA, QLoRA, and PEFT repositories—including plural metadata
 signals—are not treated as runnable MLX base models, and equivalent GGUF
 adapter files are excluded from standalone recommendations. MLX snapshots must
-also contain every declared weight shard, a root model config, self-contained
+also carry an explicit Hugging Face MLX library or tag signal, contain every
+declared weight shard, a root model config, self-contained
 tokenizer assets, and at least 100 MB of recognized model weights independently
 of unrelated snapshot files. Model-weight recognition is
 limited to standard model, weights, or consolidated safetensors names so
@@ -106,7 +107,10 @@ totals and non-negative parameter groups must be safe integers, malformed group
 maps are discarded atomically, and group sums must remain safe integers. Split
 GGUF files with numeric `N-of-M` suffixes are excluded rather than being presented as
 standalone downloads. Normalized metadata has per-field, per-repository, and whole-refresh
-size limits in addition to the upstream response-size bound. GGUF
+size limits in addition to the upstream response-size bound. Repository paths
+reject malformed Unicode and bidirectional controls before URL or shell guidance
+generation; unsafe directional controls are also discarded from optional display
+metadata. GGUF
 results that can fit Ollama reserve a larger operational disk estimate for the
 download and temporary import copy. With the runtime-neutral option, runtimes
 whose workflow does not fit are removed individually instead of excluding an
@@ -117,7 +121,9 @@ MLX artifact, and each repository contributes at most 64 deterministic GGUF
 variants sampled across represented quantizations and sizes. Valid variants
 omitted by that operational cap are reported separately in the exclusion
 summary. Upstream body reads remain subject to their request deadline even after
-response headers arrive.
+response headers arrive. Ranking preserves separately published fine-tunes even
+when they declare the same base model and quantization, while still prioritizing
+one result from each normalized model family before additional variants.
 
 ## Run locally
 

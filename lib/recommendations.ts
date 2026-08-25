@@ -188,7 +188,11 @@ function familyKey(item: Artifact) {
 }
 
 function variantKey(item: Recommendation) {
-  return `${item.explanation.familyKey}|${item.format}|${item.quantization ?? item.filename ?? item.id}`;
+  // Quantization labels identify variants within one converted repository, but
+  // separate repositories can be distinct fine-tunes of the same base model.
+  // Preserve that repository identity while still collapsing duplicate entries
+  // for an identical published variant.
+  return `${item.modelId}|${item.format}|${item.quantization ?? item.filename ?? item.id}`;
 }
 
 function compareArtifactIdentity(a: Artifact, b: Artifact) {

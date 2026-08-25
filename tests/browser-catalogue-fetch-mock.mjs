@@ -12,6 +12,7 @@ const ggufModel = {
 const mlxModel = {
   id: "mlx-community/Llama-3.2-3B-4bit",
   sha: "2222222222222222222222222222222222222222",
+  library_name: "mlx",
   downloads: 2000,
   lastModified: "2026-08-01T00:00:00Z",
   tags: ["instruct", "chat"],

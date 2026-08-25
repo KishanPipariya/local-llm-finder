@@ -25,6 +25,7 @@ type HubConfig = { max_position_embeddings?: number; max_sequence_length?: numbe
 export type HubModel = {
   id: string;
   sha?: string;
+  library_name?: string;
   downloads?: number;
   lastModified?: string;
   gated?: boolean | string;
@@ -64,6 +65,8 @@ const isMlxAdapterRepository = (model: HubModel, files: HubFile[]) => adapterSig
   ...(model.tags ?? []),
   ...files.map((file) => file.rfilename),
 ].filter((value): value is string => typeof value === "string").join(" "));
+const hasMlxFormatSignal = (model: HubModel) => model.library_name?.trim().toLowerCase() === "mlx"
+  || (model.tags ?? []).some((tag) => tag.trim().toLowerCase() === "mlx");
 const hasMlxConfig = (files: HubFile[]) => files.some((file) => file.rfilename === "config.json");
 const hasMlxTokenizer = (files: HubFile[]) => {
   const filenames = new Set(files.map((file) => file.rfilename));
@@ -90,7 +93,8 @@ function hasCompleteMlxWeightSet(files: HubFile[]) {
   return [...shardGroups.values()].every((group) => group.indexes.size === group.total);
 }
 
-const hasCompleteMlxSnapshot = (model: HubModel, files: HubFile[]) => !isMlxAdapterRepository(model, files)
+const hasCompleteMlxSnapshot = (model: HubModel, files: HubFile[]) => hasMlxFormatSignal(model)
+  && !isMlxAdapterRepository(model, files)
   && hasCompleteMlxWeightSet(files)
   && hasMlxConfig(files)
   && hasMlxTokenizer(files);
@@ -130,14 +134,17 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+const hasUnsafeUnicode = (value: string) => !value.isWellFormed()
+  || /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u.test(value);
+
 function asBoundedString(value: unknown, maxLength = MAX_METADATA_STRING_CHARS): string | undefined {
   const candidate = asString(value);
-  return candidate !== undefined && candidate.length <= maxLength ? candidate : undefined;
+  return candidate !== undefined && candidate.length <= maxLength && !hasUnsafeUnicode(candidate) ? candidate : undefined;
 }
 
 const hasUnsafeControlCharacter = (value: string) => /[\u0000-\u001F\u007F]/.test(value);
 const isSafeRelativePath = (value: string) => {
-  if (!value || value.length > MAX_PATH_CHARS || hasUnsafeControlCharacter(value) || value.startsWith("/")) return false;
+  if (!value || value.length > MAX_PATH_CHARS || hasUnsafeUnicode(value) || hasUnsafeControlCharacter(value) || value.startsWith("/")) return false;
   return value.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
 };
 const isSafeModelId = (value: string) => {
@@ -243,6 +250,7 @@ export function normalizeHubModel(value: unknown): HubModel | undefined {
   if (!id || !isSafeModelId(id)) return undefined;
   const shaCandidate = asBoundedString(model.sha, 40)?.trim();
   const sha = shaCandidate && /^[a-f0-9]{40}$/i.test(shaCandidate) ? shaCandidate.toLowerCase() : undefined;
+  const libraryName = asBoundedString(model.library_name);
   const downloads = asFiniteNumber(model.downloads);
   const lastModified = asBoundedString(model.lastModified);
   const gated = typeof model.gated === "boolean" ? model.gated : asBoundedString(model.gated);
@@ -263,6 +271,7 @@ export function normalizeHubModel(value: unknown): HubModel | undefined {
   const normalized: HubModel = {
     id,
     sha,
+    library_name: libraryName,
     downloads,
     lastModified,
     gated,
@@ -281,6 +290,7 @@ function normalizedMetadataCharacters(model: HubModel) {
   const strings = [
     model.id,
     model.sha,
+    model.library_name,
     model.lastModified,
     typeof model.gated === "string" ? model.gated : undefined,
     model.pipeline_tag,
