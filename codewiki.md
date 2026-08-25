@@ -159,7 +159,8 @@ Normalization excludes unknown, non-integer, and smaller-than-100 MB artifacts.
 
 - GGUF: retain every valid, standalone Hugging Face `.gguf` file as a separate
   quantization variant (Q2–Q8, IQ variants, and F16/BF16/F32 labels when
-  present). Split shards and auxiliary `mmproj`, tokenizer, adapter, LoRA, and
+  present). Split shards with numeric `N-of-M` suffixes and
+  auxiliary `mmproj`, tokenizer, adapter, LoRA, and
   imatrix files are excluded because the exact-file guidance cannot run them by
   themselves. Explicit unknown or incompatible pipeline tasks are excluded;
   missing task metadata is accepted only when the model has a text/chat/coding
@@ -191,6 +192,8 @@ Normalization excludes unknown, non-integer, and smaller-than-100 MB artifacts.
   file in the repository snapshot—not only recognised runtime assets.
   Every declared checkpoint shard must be present with a valid one-based index;
   incomplete or internally inconsistent shard groups are unsupported artifacts.
+  Duplicate normalized repository paths reject the repository before snapshot
+  sizing, preventing repeated metadata entries from inflating fit estimates.
   Adapter-only, LoRA, QLoRA, and PEFT repositories are classified as unsupported
   artifacts even when they contain a `.safetensors` file, because MLX-LM needs a
   complete, self-contained base-model snapshot. Tokenizer, optimizer, training
@@ -255,9 +258,10 @@ tags, conversational tasks, and GGUF chat-template metadata provide chat signals
 Missing pipeline metadata stays eligible and neutral only when explicit
 text/chat/coding evidence is present; format, author, and model-family names are
 not sufficient. Explicit unknown or incompatible pipeline tasks are excluded
-conservatively. Numeric parameter metadata is
-normalized to billions from standard GGUF or safetensors totals, model-card
-values, base-model names, or repository names when plausible. Workload metadata is presented only as
+conservatively. Numeric parameter metadata is normalized to billions from
+standard GGUF or safetensors totals, model-card values, base-model names, or
+repository names when plausible. Safetensors totals and parameter groups must
+be non-negative safe integers before aggregation. Workload metadata is presented only as
 coding-oriented, general chat, mixed, or unknown—not as a capability benchmark. A bounded
 precision preference ranks higher-precision variants ahead of more aggressively
 compressed variants when both fit; this is not presented as a quality benchmark. Ranking

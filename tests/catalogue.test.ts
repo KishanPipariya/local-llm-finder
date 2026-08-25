@@ -8,7 +8,7 @@ const mlxCommit = "2222222222222222222222222222222222222222";
 const listedModel = { id: "org/Model-GGUF", sha: ggufCommit, pipeline_tag: "text-generation", siblings: [{ rfilename: "model.Q4_K_M.gguf", size: 4_000_000_000 }] };
 const listedMlxModel = { id: "mlx-community/Model", sha: mlxCommit, pipeline_tag: "text-generation", siblings: [{ rfilename: "weights.safetensors", size: 4_000_000_000 }, { rfilename: "config.json", size: 1_000 }, { rfilename: "tokenizer.json", size: 1_000 }] };
 test("normalization discards malformed optional Hugging Face metadata", () => {
-  const [model] = parseHubModelList([{ ...listedModel, downloads: "many", lastModified: 42, gated: { value: true }, tags: ["code", 42], pipeline_tag: ["text-generation"], gguf: { total: "large", chat_template: 4, context_length: "large" }, safetensors: { total: "large", parameters: { BF16: "large" } }, config: { max_position_embeddings: "large" }, cardData: { license: 3, params: {}, base_model: ["base/model"] }, siblings: [{ rfilename: "model.Q4_K_M.gguf", size: "large" }, listedModel.siblings[0], { rfilename: 42, size: 5 }] }]);
+  const [model] = parseHubModelList([{ ...listedModel, downloads: "many", lastModified: 42, gated: { value: true }, tags: ["code", 42], pipeline_tag: ["text-generation"], gguf: { total: "large", chat_template: 4, context_length: "large" }, safetensors: { total: "large", parameters: { BF16: "large" } }, config: { max_position_embeddings: "large" }, cardData: { license: 3, params: {}, base_model: ["base/model"] }, siblings: [{ rfilename: "unknown-size.Q4_K_M.gguf", size: "large" }, listedModel.siblings[0], { rfilename: 42, size: 5 }] }]);
   assert.deepEqual(model.tags, ["code"]);
   assert.equal(model.downloads, undefined);
   assert.equal(model.cardData?.base_model, "base/model");
@@ -42,6 +42,21 @@ test("normalization rejects repositories with excessive metadata cardinality", (
   assert.deepEqual(normalizeHubModel({ id: "org/Long-Path", siblings: [{ rfilename: `${"x".repeat(1_025)}.json`, size: 1 }] })?.siblings, []);
   const oversizedMetadata = Array.from({ length: 1_025 }, () => ({ rfilename: "x".repeat(1_024), size: 1 }));
   assert.equal(normalizeHubModel({ id: "org/Too-Much-Metadata", siblings: oversizedMetadata }), undefined);
+});
+
+test("normalization rejects duplicate repository paths before sizing artifacts", () => {
+  const duplicateWeights = {
+    id: "mlx-community/Duplicate-Weights",
+    pipeline_tag: "text-generation",
+    siblings: [
+      { rfilename: "weights.safetensors", size: 4_000_000_000 },
+      { rfilename: "weights.safetensors", size: 4_000_000_000 },
+      { rfilename: "config.json", size: 1_000 },
+      { rfilename: "tokenizer.json", size: 1_000 },
+    ],
+  };
+  assert.equal(normalizeHubModel(duplicateWeights), undefined);
+  assert.deepEqual(normalizeModels([duplicateWeights], "mlx"), [], "direct normalization cannot double-count duplicate paths");
 });
 
 test("catalogue list parsing rejects a materially malformed upstream sample", () => {
@@ -102,6 +117,19 @@ test("normalizes standard safetensors parameter metadata for MLX repositories", 
     siblings: [{ rfilename: "weights.safetensors", size: 4_000_000_000 }, { rfilename: "config.json", size: 1_000 }, { rfilename: "tokenizer.json", size: 1_000 }],
   }], "mlx");
   assert.equal(artifact.paramsB, 7);
+});
+
+test("safetensors parameter groups require non-negative safe-integer counts", () => {
+  const normalized = normalizeHubModel({
+    id: "org/Parameter-Groups-GGUF",
+    pipeline_tag: "text-generation",
+    safetensors: { total: -1, parameters: { BF16: 70_000_000_000, negative: -63_000_000_000, fractional: 1.5, unsafe: Number.MAX_SAFE_INTEGER + 1 } },
+    siblings: [{ rfilename: "model.Q4.gguf", size: 4_000_000_000 }],
+  });
+  assert.deepEqual(normalized?.safetensors?.parameters, { BF16: 70_000_000_000 });
+  assert.equal(normalized?.safetensors?.total, undefined);
+  assert.ok(normalized);
+  assert.equal(normalizeModels([normalized], "gguf")[0].paramsB, undefined, "invalid groups cannot cancel a spoofed parameter total into a plausible value");
 });
 
 test("GGUF exclusion counts track each invalid file in a mixed-validity repository", () => {
@@ -233,12 +261,15 @@ test("catalogue excludes non-chat tasks and non-standalone GGUF files", () => {
     siblings: [
       { rfilename: "model-00001-of-00002.gguf", size: 2_000_000_000 },
       { rfilename: "model-00002-of-00002.gguf", size: 2_000_000_000 },
+      { rfilename: "alternate-1-of-2.gguf", size: 2_000_000_000 },
+      { rfilename: "alternate-2-of-2.gguf", size: 2_000_000_000 },
+      { rfilename: "padded-000001-of-000002.gguf", size: 2_000_000_000 },
       { rfilename: "model.Q4_K_M.gguf", size: 4_000_000_000 },
       { rfilename: "mmproj-model-f16.gguf", size: 300_000_000 },
     ],
   };
   assert.deepEqual(normalizeModels([split], "gguf").map((item) => item.filename), ["model.Q4_K_M.gguf"]);
-  assert.deepEqual(normalizationExclusions([split], "gguf"), { unsupportedArtifact: 3 });
+  assert.deepEqual(normalizationExclusions([split], "gguf"), { unsupportedArtifact: 6 });
 
   const noTaskSignal = { id: "org/NoTaskSignal", siblings: [{ rfilename: "weights.gguf", size: 4_000_000_000 }] };
   assert.deepEqual(normalizeModels([noTaskSignal], "gguf"), [], "metadata-poor artifacts are not admitted without a text-model signal");

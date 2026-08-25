@@ -106,7 +106,9 @@ const isSupportedTask = (model: HubModel) => {
   return Boolean(model.gguf?.chat_template)
     || textModelSignal.test(`${model.id} ${model.cardData?.model_name ?? ""} ${model.cardData?.base_model ?? ""} ${(model.tags ?? []).join(" ")}`);
 };
-const isGgufShard = (file: HubFile) => /(?:^|[-_.])\d{5}-of-\d{5}\.gguf$/i.test(file.rfilename);
+// Split GGUF repositories normally use five-digit counters, but any numeric
+// counter within the already-bounded path carries the same incomplete-file risk.
+const isGgufShard = (file: HubFile) => /(?:^|[-_.])\d+-of-\d+\.gguf$/i.test(file.rfilename);
 const isGgufAuxiliary = (file: HubFile) => /(?:^|[._/-])(?:mmproj|imatrix|adapter|lora|tokenizer|vocab)(?:[._/-]|$)/i.test(file.rfilename);
 const isStandaloneGguf = (file: HubFile) => !isGgufShard(file) && !isGgufAuxiliary(file);
 const repoUrl = (id: string) => `https://huggingface.co/${id}`;
@@ -147,6 +149,10 @@ function asFiniteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function asParameterCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
 function normalizeHubFile(value: unknown): HubFile | undefined {
   const file = asRecord(value);
   if (!file) return undefined;
@@ -154,6 +160,10 @@ function normalizeHubFile(value: unknown): HubFile | undefined {
   if (!rfilename || !isSafeRelativePath(rfilename)) return undefined;
   const size = asFiniteNumber(file.size);
   return size === undefined ? { rfilename } : { rfilename, size };
+}
+
+function hasUniqueFilePaths(files: HubFile[]) {
+  return new Set(files.map((file) => file.rfilename)).size === files.length;
 }
 
 function normalizeCardData(value: unknown): HubModel["cardData"] | undefined {
@@ -186,12 +196,12 @@ function normalizeGguf(value: unknown): HubModel["gguf"] | undefined {
 function normalizeSafetensors(value: unknown): HubModel["safetensors"] | undefined {
   const safetensors = asRecord(value);
   if (!safetensors) return undefined;
-  const total = asFiniteNumber(safetensors.total);
+  const total = asParameterCount(safetensors.total);
   const rawParameters = asRecord(safetensors.parameters);
   const parameterEntries = rawParameters ? Object.entries(rawParameters) : undefined;
   const parsedParameters = parameterEntries && parameterEntries.length <= MAX_PARAMETER_GROUPS
     ? Object.fromEntries(parameterEntries.flatMap(([key, candidate]) => {
-      const parsed = asFiniteNumber(candidate);
+      const parsed = asParameterCount(candidate);
       return parsed === undefined || key.length > MAX_TAG_CHARS ? [] : [[key, parsed]];
     }))
     : undefined;
@@ -232,6 +242,7 @@ export function normalizeHubModel(value: unknown): HubModel | undefined {
   const siblings = Array.isArray(model.siblings)
     ? model.siblings.map(normalizeHubFile).filter((file): file is HubFile => file !== undefined)
     : undefined;
+  if (siblings && !hasUniqueFilePaths(siblings)) return undefined;
   const normalized: HubModel = {
     id,
     sha,
@@ -281,7 +292,8 @@ export function parseHubModelList(value: unknown): HubModel[] {
 }
 
 function modelFiles(model: HubModel): HubFile[] {
-  return (model.siblings ?? []).filter((file) => isSafeRelativePath(file.rfilename));
+  const files = (model.siblings ?? []).filter((file) => isSafeRelativePath(file.rfilename));
+  return hasUniqueFilePaths(files) ? files : [];
 }
 
 function validGgufFiles(files: HubFile[]) {
