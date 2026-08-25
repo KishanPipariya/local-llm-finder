@@ -57,8 +57,8 @@ const knownFileSize = (size: unknown): size is number => typeof size === "number
 // weights when deciding that a repository is runnable.
 const mlxWeightFilename = /(?:^|\/)(?:model|weights?|consolidated)(?:-\d+-of-\d+)?\.safetensors$/i;
 const isMlxWeightFile = (file: HubFile) => mlxWeightFilename.test(file.rfilename);
-const mlxAdapterSignal = /(?:^|[^a-z0-9])(?:adapters?|loras?|qloras?|pefts?)(?:$|[^a-z0-9])/i;
-const isMlxAdapterRepository = (model: HubModel, files: HubFile[]) => mlxAdapterSignal.test([
+const adapterSignal = /(?:^|[^a-z0-9])(?:adapters?|loras?|qloras?|pefts?)(?:$|[^a-z0-9])/i;
+const isMlxAdapterRepository = (model: HubModel, files: HubFile[]) => adapterSignal.test([
   model.id,
   model.cardData?.model_name,
   ...(model.tags ?? []),
@@ -94,7 +94,11 @@ const hasCompleteMlxSnapshot = (model: HubModel, files: HubFile[]) => !isMlxAdap
   && hasCompleteMlxWeightSet(files)
   && hasMlxConfig(files)
   && hasMlxTokenizer(files);
-const hasValidMlxWeightSizes = (files: HubFile[]) => files.filter(isMlxWeightFile).every((file) => knownFileSize(file.size));
+const hasValidMlxWeightSizes = (files: HubFile[]) => {
+  const weights = files.filter(isMlxWeightFile);
+  if (!weights.length || !weights.every((file) => knownFileSize(file.size))) return false;
+  return validSize(weights.reduce((total, file) => total + file.size!, 0));
+};
 const supportedPipelineTags = new Set(["text-generation", "text2text-generation", "conversational"]);
 const textModelSignal = /(?:^|[^a-z])(?:instruct|chat|assistant|conversation|conversational|code|coder|coding|programming|text-generation|text-model|language-model|llm)(?:$|[^a-z])/i;
 const isSupportedTask = (model: HubModel) => {
@@ -109,7 +113,8 @@ const isSupportedTask = (model: HubModel) => {
 // Split GGUF repositories normally use five-digit counters, but any numeric
 // counter within the already-bounded path carries the same incomplete-file risk.
 const isGgufShard = (file: HubFile) => /(?:^|[-_.])\d+-of-\d+\.gguf$/i.test(file.rfilename);
-const isGgufAuxiliary = (file: HubFile) => /(?:^|[._/-])(?:mmproj|imatrix|adapter|lora|tokenizer|vocab)(?:[._/-]|$)/i.test(file.rfilename);
+const isGgufAuxiliary = (file: HubFile) => /(?:^|[._/-])(?:mmproj|imatrix|tokenizer|vocab)(?:[._/-]|$)/i.test(file.rfilename)
+  || adapterSignal.test(file.rfilename);
 const isStandaloneGguf = (file: HubFile) => !isGgufShard(file) && !isGgufAuxiliary(file);
 const repoUrl = (id: string) => `https://huggingface.co/${id}`;
 const revisionUrl = (id: string, revision?: string) => revision ? `${repoUrl(id)}/tree/${encodeURIComponent(revision)}` : repoUrl(id);
@@ -206,13 +211,15 @@ function normalizeSafetensors(value: unknown): HubModel["safetensors"] | undefin
   const total = asPositiveParameterCount(safetensors.total);
   const rawParameters = asRecord(safetensors.parameters);
   const parameterEntries = rawParameters ? Object.entries(rawParameters) : undefined;
-  const parsedParameters = parameterEntries && parameterEntries.length <= MAX_PARAMETER_GROUPS
-    ? Object.fromEntries(parameterEntries.flatMap(([key, candidate]) => {
-      const parsed = asParameterCount(candidate);
-      return parsed === undefined || key.length > MAX_TAG_CHARS ? [] : [[key, parsed]];
-    }))
+  // Parameter groups describe one aggregate count. Silently dropping a malformed
+  // group would turn an incomplete partial sum into authoritative ranking data.
+  const validParameterEntries = parameterEntries
+    && parameterEntries.length > 0
+    && parameterEntries.length <= MAX_PARAMETER_GROUPS
+    && parameterEntries.every(([key, candidate]) => key.length <= MAX_TAG_CHARS && asParameterCount(candidate) !== undefined);
+  const parameters = validParameterEntries
+    ? Object.fromEntries(parameterEntries.map(([key, candidate]) => [key, asParameterCount(candidate)!]))
     : undefined;
-  const parameters = parsedParameters && Object.keys(parsedParameters).length > 0 ? parsedParameters : undefined;
   return total === undefined && !parameters ? undefined : { total, parameters };
 }
 

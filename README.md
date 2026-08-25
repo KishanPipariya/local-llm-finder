@@ -91,17 +91,19 @@ catalogue. Parameter metadata is retained
 only when the exact artifact size is plausible for its declared quantization or
 precision, using a conservative Q2 floor when precision is unknown.
 Adapter-only LoRA, QLoRA, and PEFT repositories—including plural metadata
-signals—are not treated as runnable MLX base models. MLX snapshots must also
-contain every declared weight shard, a root model config, and self-contained
-tokenizer assets. Model-weight recognition is
+signals—are not treated as runnable MLX base models, and equivalent GGUF
+adapter files are excluded from standalone recommendations. MLX snapshots must
+also contain every declared weight shard, a root model config, self-contained
+tokenizer assets, and at least 100 MB of recognized model weights independently
+of unrelated snapshot files. Model-weight recognition is
 limited to standard model, weights, or consolidated safetensors names so
 tokenizer and training-state files cannot satisfy the snapshot check. Duplicate
 normalized repository paths and repositories containing any malformed sibling
 entry are rejected before snapshot sizing. Structured GGUF or safetensors
 parameter metadata takes precedence over optional model-card values; positive
-totals and non-negative parameter groups must be safe integers, and group sums
-must remain safe integers. Split GGUF files with numeric
-`N-of-M` suffixes are excluded rather than being presented as
+totals and non-negative parameter groups must be safe integers, malformed group
+maps are discarded atomically, and group sums must remain safe integers. Split
+GGUF files with numeric `N-of-M` suffixes are excluded rather than being presented as
 standalone downloads. Normalized metadata has per-field, per-repository, and whole-refresh
 size limits in addition to the upstream response-size bound. GGUF
 results that can fit Ollama reserve a larger operational disk estimate for the

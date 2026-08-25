@@ -139,14 +139,14 @@ test("normalizes standard safetensors parameter metadata for MLX repositories", 
   assert.equal(artifact.paramsB, 7);
 });
 
-test("safetensors parameter groups require non-negative safe-integer counts", () => {
+test("safetensors parameter groups are discarded atomically when any count is invalid", () => {
   const normalized = normalizeHubModel({
     id: "org/Parameter-Groups-GGUF",
     pipeline_tag: "text-generation",
     safetensors: { total: -1, parameters: { BF16: 70_000_000_000, negative: -63_000_000_000, fractional: 1.5, unsafe: Number.MAX_SAFE_INTEGER + 1 } },
     siblings: [{ rfilename: "model.Q4.gguf", size: 4_000_000_000 }],
   });
-  assert.deepEqual(normalized?.safetensors?.parameters, { BF16: 70_000_000_000 });
+  assert.equal(normalized?.safetensors?.parameters, undefined);
   assert.equal(normalized?.safetensors?.total, undefined);
   assert.ok(normalized);
   assert.equal(normalizeModels([normalized], "gguf")[0].paramsB, undefined, "invalid groups cannot cancel a spoofed parameter total into a plausible value");
@@ -182,6 +182,18 @@ test("GGUF exclusion counts track each invalid file in a mixed-validity reposito
   };
   assert.equal(normalizeModels([model], "gguf").length, 1);
   assert.deepEqual(normalizationExclusions([model], "gguf"), { invalidSize: 2 });
+});
+
+test("GGUF adapter artifacts are never treated as standalone models", () => {
+  for (const rfilename of ["adapter.gguf", "adapters.gguf", "lora.gguf", "loras.gguf", "qlora.gguf", "qloras.gguf", "peft.gguf", "pefts.gguf"]) {
+    const model = {
+      id: "org/Adapter-GGUF",
+      pipeline_tag: "text-generation",
+      siblings: [{ rfilename, size: 500_000_000 }],
+    };
+    assert.deepEqual(normalizeModels([model], "gguf"), [], `${rfilename} is an auxiliary adapter artifact`);
+    assert.deepEqual(normalizationExclusions([model], "gguf"), { unsupportedArtifact: 1 });
+  }
 });
 
 test("MLX exclusion counts remain at repository snapshot level", () => {
@@ -220,6 +232,21 @@ test("MLX repositories cannot use non-model safetensors as a complete weight set
     assert.deepEqual(normalizeModels([model], "mlx"), [], `${rfilename} is not a model weight file`);
     assert.deepEqual(normalizationExclusions([model], "mlx"), { unsupportedArtifact: 1 });
   }
+});
+
+test("MLX model weights must independently meet the plausible-size floor", () => {
+  const model = {
+    id: "mlx-community/Inflated-Snapshot",
+    pipeline_tag: "text-generation",
+    siblings: [
+      { rfilename: "weights.safetensors", size: 1 },
+      { rfilename: "config.json", size: 1 },
+      { rfilename: "tokenizer.json", size: 1 },
+      { rfilename: "README.md", size: 100_000_000 },
+    ],
+  };
+  assert.deepEqual(normalizeModels([model], "mlx"), [], "unrelated snapshot files cannot inflate an implausibly small model weight set");
+  assert.deepEqual(normalizationExclusions([model], "mlx"), { invalidSize: 1 });
 });
 
 test("MLX adapter-only repositories are not treated as runnable model snapshots", () => {

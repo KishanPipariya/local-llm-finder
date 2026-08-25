@@ -161,7 +161,8 @@ Normalization excludes unknown, non-integer, and smaller-than-100 MB artifacts.
 - GGUF: retain every valid, standalone Hugging Face `.gguf` file as a separate
   quantization variant (Q2–Q8, IQ variants, and F16/BF16/F32 labels when
   present). Split shards with numeric `N-of-M` suffixes and
-  auxiliary `mmproj`, tokenizer, adapter, LoRA, and
+  auxiliary `mmproj`, tokenizer, adapter, LoRA, QLoRA, and PEFT files—including
+  plural adapter names—and
   imatrix files are excluded because the exact-file guidance cannot run them by
   themselves. Explicit unknown or incompatible pipeline tasks are excluded;
   missing task metadata is accepted only when the model has a text/chat/coding
@@ -202,7 +203,9 @@ Normalization excludes unknown, non-integer, and smaller-than-100 MB artifacts.
   complete, self-contained base-model snapshot. Tokenizer, optimizer, training
   state, and other arbitrarily named safetensors do not count as model weights.
   Any unknown, non-integer, or non-positive included file size excludes the
-  artifact, and the aggregate must meet the 100 MB minimum. This keeps snapshot
+  artifact. Recognized model weights and the complete snapshot must each meet
+  the 100 MB minimum, so unrelated repository files cannot inflate an
+  implausibly small checkpoint into eligibility. This keeps snapshot
   download estimates conservative. Its guidance uses `uvx hf` to keep the
   snapshot in an artifact-specific directory below `./local-models`, then runs
   `uvx --from mlx-lm mlx_lm.generate`, requiring `uv`/`uvx`. The format is usable
@@ -265,8 +268,10 @@ conservatively. Numeric parameter metadata is normalized to billions from
 standard GGUF or safetensors totals, model-card values, base-model names, or
 repository names when plausible. Structured metadata for the artifact's format
 takes precedence over optional model-card metadata. Safetensors totals must be
-positive safe integers; parameter groups may be zero but their positive aggregate
-must remain a safe integer. Workload metadata is presented only as
+positive safe integers; every entry in a parameter-group map must have a bounded
+key and non-negative safe-integer count or the entire map is discarded. A valid
+group map may contain zero counts, but its positive aggregate must remain a safe
+integer. Workload metadata is presented only as
 coding-oriented, general chat, mixed, or unknown—not as a capability benchmark. A bounded
 precision preference ranks higher-precision variants ahead of more aggressively
 compressed variants when both fit; this is not presented as a quality benchmark. Ranking
