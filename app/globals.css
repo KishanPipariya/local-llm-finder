@@ -67,3 +67,12 @@ button { justify-self: start; display: inline-flex; align-items: center; min-hei
 @media (prefers-color-scheme: dark) { :root { color-scheme: dark; --ink: #f6f3eb; --ink-soft: #c4cedb; --paper: #172337; --cream: #0d1523; --mist: #15273b; --blue: #65a5ff; --blue-dark: #9bc5ff; --blue-pale: #203e68; --line: #64758c; --line-dark: #a6b6c9; --focus: #8fc1ff; --error: #ff8b80; --warning: #ffca6b; --success: #70ce9a; --on-ink: #0d1523; --on-blue: #071626; --grid-line: rgb(246 243 235 / .055); --paper-translucent: rgb(23 35 55 / .8); --panel-start: rgb(31 62 104 / .9); --panel-end: rgb(18 30 49 / .9); --signal-line: rgb(101 165 255 / .56); --input-shadow: rgb(0 0 0 / .24); --error-surface: #3a2029; --warning-ink: #ffda96; --warning-surface: #3c301b; --success-surface: #1b3c35; --tight-surface: #423619; --slow-surface: #47252a; --card-shadow: rgb(0 0 0 / .3); --card-hover-shadow: #2a568d; } }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
 .catalogue-scope { max-width: 650px; margin-bottom: 8px; color: var(--ink-soft); font-size: 18px; line-height: 1.5; }
+.site-footer { width: calc(100% - 64px); max-width: 1256px; margin-right: auto; margin-left: auto; }
+.legal-page { max-width: 900px; min-height: 100vh; padding-top: 28px; padding-bottom: 56px; }
+.legal-page article { padding: clamp(24px, 5vw, 58px); margin: 52px 0 28px; border: 1px solid var(--line-dark); background: var(--paper); box-shadow: 8px 8px 0 var(--blue); }
+.legal-page h1 { max-width: 760px; margin: 12px 0 22px; font-size: clamp(38px, 6vw, 64px); letter-spacing: -.055em; line-height: .98; }
+.legal-page h2 { margin: 32px 0 8px; font-size: 22px; letter-spacing: -.035em; }
+.legal-page p { max-width: 720px; }
+.legal-page .legal-intro { color: var(--ink-soft); font-size: 19px; line-height: 1.55; }
+@media (max-width: 780px) { .site-footer { width: calc(100% - 32px); } }
+@media (max-width: 480px) { .site-footer { width: calc(100% - 24px); }.legal-page { padding-top: 18px; }.legal-page article { padding: 22px 16px; margin-top: 28px; box-shadow: 5px 5px 0 var(--blue); }.legal-page h1 { font-size: 38px; } }

@@ -15,7 +15,7 @@ const baseConfig = {
 const requestTimeoutMs = 60_000;
 
 function usage() {
-  console.error("Usage: npm run smoke:deploy -- https://your-deployment.example");
+  console.error("Usage: npm run smoke:deploy -- https://your-deployment.example [--fail-on-stale]");
   process.exit(1);
 }
 
@@ -65,8 +65,10 @@ function verifyResult(body, runtime) {
 }
 
 async function main() {
-  if (process.argv.length !== 3) usage();
-  const origin = deploymentUrl(process.argv[2]);
+  const [deployment, ...options] = process.argv.slice(2);
+  if (!deployment || options.some((option) => option !== "--fail-on-stale") || new Set(options).size !== options.length) usage();
+  const failOnStale = options.includes("--fail-on-stale");
+  const origin = deploymentUrl(deployment);
   const getConfig = { ...baseConfig, runtime: "ollama" };
   const getUrl = new URL("/", origin);
   Object.entries(getConfig).forEach(([key, value]) => getUrl.searchParams.set(key, String(value)));
@@ -76,6 +78,7 @@ async function main() {
   assert(html.includes('id="results"'), "GET finder flow did not render a shortlist.");
 
   console.log(`GET finder flow: ${getResponse.status}`);
+  const staleRuntimes = [];
   for (const runtime of Object.keys(runtimeLabels)) {
     const response = await fetch(endpoint(origin, "/api/recommendations"), {
       method: "POST",
@@ -88,7 +91,9 @@ async function main() {
     assert(response.ok, `${runtime}: API failed with HTTP ${response.status}.`);
     const stale = verifyResult(await response.json(), runtime);
     console.log(`${runtime}: ${stale ? "stale catalogue" : "current catalogue"}`);
+    if (stale) staleRuntimes.push(runtimeLabels[runtime]);
   }
+  assert(!failOnStale || staleRuntimes.length === 0, `stale catalogue reported for ${staleRuntimes.join(", ")}.`);
 }
 
 main().catch((error) => {

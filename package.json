@@ -17,6 +17,7 @@
     "verify:prepush": "npm run lint && npm run test:unit && npm run build",
     "verify": "npm run lint && npm test",
     "smoke:deploy": "npm run check:node && node ./scripts/deploy-smoke.mjs",
+    "monitor:deploy": "npm run smoke:deploy -- https://local-llm-finder-m7qb.vercel.app --fail-on-stale",
     "prepare": "node ./scripts/prepare.mjs"
   },
   "dependencies": {

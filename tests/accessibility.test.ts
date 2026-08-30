@@ -144,6 +144,31 @@ try {
     try {
       const initial = await waitForPage(context);
   await assertNoAxeViolations(initial, "initial finder");
+  const rootResponse = await initial.request.get(origin);
+  const rootHeaders = rootResponse.headers();
+  assert.match(rootHeaders["content-security-policy"] ?? "", /default-src 'self'/, "responses enforce a same-origin content security policy");
+  assert.match(rootHeaders["content-security-policy"] ?? "", /frame-ancestors 'none'/, "content security policy prevents framing");
+  assert.equal(rootHeaders["referrer-policy"], "no-referrer", "configuration URLs are not sent as referrers");
+  assert.equal(rootHeaders["x-content-type-options"], "nosniff", "responses prevent MIME sniffing");
+  assert.equal(rootHeaders["x-frame-options"], "DENY", "legacy clients also prevent framing");
+  assert.match(rootHeaders["permissions-policy"] ?? "", /camera=\(\)/, "unused browser capabilities are disabled");
+  assert.deepEqual(await initial.locator(".privacy-promise li").allTextContents(), ["No account", "No analytics", "No profile database"], "privacy promise describes application behavior without overstating hosting logs");
+  assert.equal(await initial.getByRole("link", { name: "Privacy details" }).getAttribute("href"), "/privacy", "the form links its request-log disclosure");
+  assert.equal(await initial.getByRole("contentinfo").getByRole("link", { name: "Privacy" }).getAttribute("href"), "/privacy", "the privacy notice remains available from the site footer");
+
+  const robotsResponse = await initial.request.get(`${origin}/robots.txt`);
+  assert.equal(robotsResponse.status(), 200, "robots metadata route responds successfully");
+  assert.match(await robotsResponse.text(), /Disallow: \/api\//, "robots metadata excludes the JSON endpoint");
+  const sitemapResponse = await initial.request.get(`${origin}/sitemap.xml`);
+  assert.equal(sitemapResponse.status(), 200, "sitemap metadata route responds successfully");
+  assert.match(await sitemapResponse.text(), /<loc>https:\/\/local-llm-finder-m7qb\.vercel\.app\/privacy<\/loc>/, "sitemap includes the privacy notice");
+
+  const privacy = await context.newPage();
+  await privacy.goto(`${origin}/privacy`, { waitUntil: "networkidle" });
+  await assertNoAxeViolations(privacy, "privacy notice");
+  assert.equal(await privacy.getByRole("heading", { level: 1 }).textContent(), "Your Mac profile is request input, not an account.");
+  assert.equal(await privacy.getByText("temporarily retain request paths and search parameters", { exact: false }).count(), 1, "privacy notice explains hosting logs");
+  await privacy.close();
   assert.equal(await initial.getByText("Ollama is the recommended default.", { exact: false }).count(), 1, "runtime helper gives beginners a recommended starting point");
   assert.deepEqual(await initial.locator('input[name="runtime"]').evaluateAll((inputs) => inputs.map((input) => input.getAttribute("value"))), ["ollama", "lmStudio", "mlx", "llamaCpp", "any"], "runtime choices put the beginner recommendation first and expose the neutral option");
   assert.deepEqual(await initial.locator('input[name="context"]').evaluateAll((inputs) => inputs.map((input) => input.parentElement?.textContent?.trim())), ["Short · 4KA short conversation or one small file", "Normal · 16KChat and a few files · recommended", "Long · 32KLarge documents or repositories"], "context choices explain conversation size in plain language");
@@ -261,6 +286,7 @@ try {
     const phoneContext = await browser!.newContext({ viewport: { width: 375, height: 812 } });
     const darkContext = await browser!.newContext({ colorScheme: "dark" });
     const narrowDarkContext = await browser!.newContext({ colorScheme: "dark", viewport: { width: 320, height: 720 } });
+    const adaptedContext = await browser!.newContext({ reducedMotion: "reduce", viewport: { width: 320, height: 720 } });
     try {
       const narrowInitial = await waitForPage(narrowContext);
       const lightSurface = await narrowInitial.locator("body").evaluate((body) => getComputedStyle(body).backgroundColor);
@@ -327,8 +353,19 @@ try {
   await assertNoAxeViolations(darkInvalid, "dark-theme server-rendered invalid form");
   assert.equal(await darkInvalid.locator(".error-summary").count(), 1, "dark theme retains the visible error summary");
   assert.equal(await darkInvalid.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "dark theme reflows without horizontal scrolling at 320px");
+
+  const adapted = await waitForPage(adaptedContext);
+  assert.equal(await adapted.locator("html").evaluate((element) => getComputedStyle(element).scrollBehavior), "auto", "reduced motion disables smooth scrolling");
+  const animationDurationMs = await adapted.locator(".hero-copy").evaluate((element) => {
+    const duration = getComputedStyle(element).animationDuration;
+    return Number.parseFloat(duration) * (duration.endsWith("ms") ? 1 : 1_000);
+  });
+  assert.ok(animationDurationMs <= 0.01, "reduced motion minimizes entrance animation duration");
+  await adapted.addStyleTag({ content: "* { line-height: 1.5 !important; letter-spacing: .12em !important; word-spacing: .16em !important; } p { margin-bottom: 2em !important; }" });
+  await assertNoAxeViolations(adapted, "320px finder with WCAG text-spacing overrides and reduced motion");
+  await assertPhoneLayout(adapted, "320px finder with WCAG text-spacing overrides");
     } finally {
-      await Promise.all([narrowDarkContext.close(), darkContext.close(), phoneContext.close(), narrowContext.close()]);
+      await Promise.all([adaptedContext.close(), narrowDarkContext.close(), darkContext.close(), phoneContext.close(), narrowContext.close()]);
     }
   });
 

@@ -54,7 +54,7 @@ export function FinderForm({ config, submitted, fieldErrors, catalogueError }: {
     <div className="section-intro">
       <span className="eyebrow">01 — Your machine</span>
       <h2 id="finder-title">Build your Mac profile</h2>
-      <p>We use these details only to calculate this recommendation. They are sent with this page request and are not saved.</p>
+      <p>We use these details only to calculate this recommendation. They remain in the shareable page URL, but this app does not create a profile, cookie, or database record. Hosting request logs may retain the URL temporarily. <a href="/privacy">Privacy details</a>.</p>
     </div>
     <form method="get" aria-describedby="configuration-help">
       {submitted && Object.keys(visibleFieldErrors).length > 0 && <div className="error-summary" role="alert" tabIndex={-1} autoFocus>
@@ -62,7 +62,7 @@ export function FinderForm({ config, submitted, fieldErrors, catalogueError }: {
         <p>Correct the following before finding models. Select an issue to move to that control.</p>
         <ul>{(Object.entries(visibleFieldErrors) as [ConfigField, string][]).map(([field, error]) => <li key={field}><a href={`#${fieldTargets[field]}`} onClick={focusField(field)}>{error}</a></li>)}</ul>
       </div>}
-      <p id="configuration-help" className="form-help">Your choices stay in this page link only; we do not save your Mac profile.</p>
+      <p id="configuration-help" className="form-help">Your choices stay in this page link; the app does not add a profile record or cookie.</p>
 
       <fieldset className="form-section hardware-section">
         <legend>Hardware</legend>

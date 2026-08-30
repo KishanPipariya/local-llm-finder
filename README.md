@@ -4,7 +4,12 @@
 
 ![Fixture-backed recommended results](docs/images/recommended-results.png)
 
-Your Mac configuration is used only for that request; it is not saved. The finder gives conservative, best-effort compatibility and storage estimates—not guarantees that a download, import, or run will succeed—and qualitative pace estimates rather than performance benchmarks.
+Your Mac configuration is request input, not an account or saved application
+profile. The server-rendered form keeps it in a shareable URL, which can appear
+temporarily in hosting-provider request logs; see the deployed privacy page for
+the exact boundary. The finder gives conservative, best-effort compatibility
+and storage estimates—not guarantees that a download, import, or run will
+succeed—and qualitative pace estimates rather than performance benchmarks.
 
 ## Alternatives
 
@@ -35,6 +40,11 @@ POST /api/recommendations ┘                                      └───�
 ```
 
 ## API
+
+This route is the application's same-origin JSON adapter, not currently a
+versioned third-party API. Cross-origin browser access is not enabled and no
+compatibility window is promised. Production operators should apply
+platform-level abuse protection without adding application-level IP tracking.
 
 `POST /api/recommendations` accepts the same configuration used by the GET form:
 
@@ -155,5 +165,17 @@ llama.cpp, and MLX. It reports stale catalogue status and fails on unavailable,
 malformed, or empty format-compatible results. Submitted configurations are request-only.
 Each smoke-check request has a 60-second deadline.
 
+Pass `--fail-on-stale` after the deployment URL when stale catalogue data should
+fail the command. `npm run monitor:deploy` applies that stricter policy to the
+checked-in production URL. A scheduled GitHub Actions workflow runs the monitor
+every six hours and can also be dispatched manually.
+
 For project internals, development checks, and architecture details, see [codewiki.md](codewiki.md).
 For a repeatable demo handoff, see [the showcase checklist](docs/showcase-checklist.md).
+Before announcing a production deployment, complete the [public release checklist](docs/public-release-checklist.md).
+The required hosting and repository controls are described in [the platform settings guide](docs/platform-release-settings.md).
+Security concerns should follow [the private reporting policy](SECURITY.md); ordinary changes should follow [the contribution guide](CONTRIBUTING.md).
+
+## Licence
+
+This project is available under the [MIT License](LICENSE).

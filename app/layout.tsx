@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
+import { siteUrl } from "@/lib/site";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://local-llm-finder-m7qb.vercel.app/"),
+  metadataBase: new URL(siteUrl),
   title: "Local / LLM — Mac model finder",
   description: "Find current local chat and coding models that fit your Mac.",
   alternates: { canonical: "/" },

@@ -25,12 +25,14 @@ export default async function Home({ searchParams }: { searchParams: Promise<Fin
       else throw error;
     }
   }
-  return <main>
+  return <>
     <a className="skip-link" href="#finder">Skip to the model finder</a>
-    <Hero />
-    <PresetLinks />
-    <FinderForm config={validation.valid ? validation.data : candidate} submitted={submitted} fieldErrors={validation.valid ? {} : validation.fieldErrors} catalogueError={catalogueError} />
-    {result && selectedConfig && <Results result={result} config={selectedConfig} />}
+    <main>
+      <Hero />
+      <PresetLinks />
+      <FinderForm config={validation.valid ? validation.data : candidate} submitted={submitted} fieldErrors={validation.valid ? {} : validation.fieldErrors} catalogueError={catalogueError} />
+      {result && selectedConfig && <Results result={result} config={selectedConfig} />}
+    </main>
     <SiteFooter />
-  </main>;
+  </>;
 }

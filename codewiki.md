@@ -81,14 +81,17 @@ and long links and disclosure summaries wrap rather than overflow.
 
 | Path | Responsibility |
 | --- | --- |
-| `app/layout.tsx` | Root HTML layout and site metadata. |
+| `app/layout.tsx` | Root HTML layout and site metadata using the shared production origin. |
 | `app/opengraph-image.tsx` | Code-generated 1200×630 branded social image route. |
 | `app/icon.tsx` | Code-generated branded application icon route. |
-| `next.config.ts` | Next configuration, including the TypeScript 6 compatibility API mode required while TypeScript 7 has no compiler API. |
+| `app/robots.ts` | Search-crawler rules that expose the sitemap and exclude the JSON endpoint. |
+| `app/sitemap.ts` | Canonical finder and privacy URLs for search discovery. |
+| `app/privacy/page.tsx` | Public disclosure for request input, shareable URLs, hosting logs, and upstream links. |
+| `next.config.ts` | Next configuration, including global browser-security headers and the TypeScript 6 compatibility API mode required while TypeScript 7 has no compiler API. |
 | `app/page.tsx` | Server-side route composition: parses GET query values, retrieves results, and passes them to presentation sections. |
 | `app/components/hero.tsx` | Static editorial hero and privacy promise. |
 | `app/components/preset-links.tsx` | Complete, shareable GET profile links. |
-| `app/components/site-footer.tsx` | Product constraints and runtime-format footer. |
+| `app/components/site-footer.tsx` | Page-level content-information footer with product constraints, runtime formats, and privacy access. |
 | `app/components/finder-form.tsx` | Progressively enhanced accessible configuration form, live profile summary, contextual guidance, and field-level validation recovery. |
 | `app/components/hardware-selector.tsx` | Chip-valid memory selector and accessible automatic-adjustment announcement. |
 | `app/components/results.tsx` | Results heading, submitted setup summary/edit link, top-pick and alternatives grouping, no-results recovery, catalogue disclosure, and actionable exclusion disclosure. |
@@ -104,13 +107,17 @@ and long links and disclosure summaries wrap rather than overflow.
 | `lib/catalogue.ts` | Stable retrieval facade: server-side Hugging Face retrieval, metadata normalization, and framework-cache composition. |
 | `lib/catalogue-request.ts` | Shared upstream timeout, bounded JSON-response, and bounded-concurrency helpers. |
 | `lib/catalogue-cache.ts` | Six-hour, process-local cache with request coalescing, stale fallback, and retry backoff. |
+| `lib/site.ts` | Shared production site and source-repository origins. |
 | `tests/recommendations.test.ts` | Node tests for domain logic, ranking, cache behavior, and API statuses. |
 | `tests/request.test.ts` | Node tests for GET parsing and GET/POST validation parity. |
 | `tests/catalogue.test.ts` | Node tests for catalogue boundary normalization and upstream failure behavior. |
 | `tests/accessibility.test.ts` | Playwright and axe checks for keyboard use, validation, responsive reflow, and no-JavaScript behavior. |
 | `docs/accessibility-release-checklist.md` | Manual release checks for public UI changes. |
 | `docs/showcase-checklist.md` | Demo warm-up, upstream-outage fallback, and installation-path review checklist. |
+| `docs/public-release-checklist.md` | Operator, legal, privacy, abuse-protection, monitoring, and final release decisions. |
+| `docs/platform-release-settings.md` | Exact Vercel logging and WAF review, GitHub private-reporting, and monitor-notification steps. |
 | `docs/images/recommended-results.png` | Checked-in fixture-backed screenshot used in the README. |
+| `LICENSE` | MIT terms for using, modifying, and distributing the source. |
 | `mise.toml` | Node 24 version-management configuration. |
 | `.nvmrc` | Node 24 configuration for nvm. |
 | `scripts/check-node-version.mjs` | Enforces Node 24 for release checks. |
@@ -457,6 +464,8 @@ so browser checks exercise the production retrieval and normalization path
 without external network access. Production code has no fixture switch or
 catalogue environment variable. The browser checks report initial/hardware,
 results/recovery, responsive/theme, and no-JavaScript scenarios separately.
+Responsive coverage includes 320 and 375 CSS-pixel layouts plus a 320-pixel
+reduced-motion context with WCAG text-spacing overrides.
 Server startup captures bounded diagnostics and retries with a new ephemeral
 port after an `EADDRINUSE` collision. Cleanup registers its exit observer before
 signalling the production server, waits for a bounded graceful shutdown, and
@@ -491,6 +500,14 @@ shortlist. The check only sends request-scoped configurations and saves none.
 Every deployment request has a 60-second deadline so an unresponsive target
 cannot leave the smoke check running indefinitely.
 
+`npm run smoke:deploy -- <deployment-url> --fail-on-stale` also fails when any
+runtime reports stale catalogue data. `npm run monitor:deploy` applies this
+strict mode to the checked-in production URL. The scheduled
+`.github/workflows/production-monitor.yml` job runs it every six hours and on
+manual dispatch with a bounded job timeout, providing a GitHub Actions failure
+signal for 5xx responses, invalid or empty results, and stale catalogues without
+printing submitted configurations.
+
 ## Sharing and showcase assets
 
 Root metadata uses `https://local-llm-finder-m7qb.vercel.app/` as its canonical
@@ -501,6 +518,23 @@ the same cream, navy, and blue visual language as the finder. The README's
 production retrieval path, not from a live catalogue. See
 [`docs/showcase-checklist.md`](docs/showcase-checklist.md) before a demo or
 recording.
+
+The same production origin is centralized in `lib/site.ts` for root metadata,
+`robots.txt`, and `sitemap.xml`; update that constant when attaching the final
+custom domain. The crawler rules allow public pages, exclude `/api/`, and point
+to a sitemap containing the finder and privacy notice. Global response headers
+enforce a bounded same-origin CSP, deny framing and MIME sniffing, disable
+unused browser capabilities, isolate top-level windows, and prevent shareable
+configuration URLs from being sent as referrers.
+
+The privacy notice distinguishes application persistence from hosting-provider
+operations: the app creates no account, analytics event, configuration cookie,
+browser-storage entry, or profile database record, while the shareable GET URL
+can be retained temporarily in platform request logs. Server-side Hugging Face
+catalogue requests never include the submitted Mac profile. The JSON route is a
+same-origin transport adapter rather than a versioned third-party API; operators
+apply abuse controls at the hosting layer so the application does not start
+tracking client IP addresses.
 
 ## Safe change checklist
 
