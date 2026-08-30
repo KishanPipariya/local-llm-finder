@@ -8,7 +8,7 @@ motion, WCAG text-spacing overrides, and operation without JavaScript. The
 manual checks below remain necessary for assistive-technology behavior and
 human visual review.
 
-- [ ] Run `npm test`, `npm run lint`, `npm run build`, and `npm run test:a11y`.
+- [x] Run `npm test`, `npm run lint`, `npm run build`, and `npm run test:a11y`.
 - [ ] With keyboard only, complete the finder, submit it, use the skip link, open and close installation guidance, and open a model link. Confirm visible focus and logical focus order throughout.
 - [ ] In Safari with VoiceOver, review the initial form, validation error summary and messages, catalogue-error message, empty results, populated results, stale-catalogue notice, runtime labels, and expanded installation guidance.
 - [ ] In Firefox or Chrome with NVDA, repeat the VoiceOver review and verify announced labels, status, and new-tab disclosure.
