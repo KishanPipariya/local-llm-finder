@@ -21,7 +21,7 @@
     "prepare": "node ./scripts/prepare.mjs"
   },
   "dependencies": {
-    "next": "^16.3.0",
+    "next": "^16.3.3",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
@@ -29,11 +29,11 @@
     "@axe-core/playwright": "^4.13.0",
     "@eslint/compat": "2.1.0",
     "@types/node": "26.4.0",
-    "@types/react": "19.2.14",
-    "@types/react-dom": "19.2.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
     "@typescript/native": "npm:typescript@7.0.2",
     "eslint": "10.9.1",
-    "eslint-config-next": "16.3.0",
+    "eslint-config-next": "16.3.3",
     "husky": "^9.1.7",
     "playwright": "^1.62.1",
     "tsx": "4.23.12",
