@@ -1,6 +1,6 @@
 # Mac Local LLM Finder
 
-[Try the live app](https://local-llm-finder-m7qb.vercel.app/) to find current
+[Try the live app](https://local-llm-finder.vercel.app/) to find current
 chat and coding models that fit your Apple Silicon Mac.
 
 ![Recommended local models](docs/images/recommended-results.png)

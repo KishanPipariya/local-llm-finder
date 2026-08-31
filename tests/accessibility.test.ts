@@ -161,7 +161,7 @@ try {
   assert.match(await robotsResponse.text(), /Disallow: \/api\//, "robots metadata excludes the JSON endpoint");
   const sitemapResponse = await initial.request.get(`${origin}/sitemap.xml`);
   assert.equal(sitemapResponse.status(), 200, "sitemap metadata route responds successfully");
-  assert.match(await sitemapResponse.text(), /<loc>https:\/\/local-llm-finder-m7qb\.vercel\.app\/privacy<\/loc>/, "sitemap includes the privacy notice");
+  assert.match(await sitemapResponse.text(), /<loc>https:\/\/local-llm-finder\.vercel\.app\/privacy<\/loc>/, "sitemap includes the privacy notice");
 
   const privacy = await context.newPage();
   await privacy.goto(`${origin}/privacy`, { waitUntil: "networkidle" });
@@ -180,8 +180,8 @@ try {
   await specsSummary.click();
   assert.notEqual(await specsHelper.getAttribute("open"), null, "Mac-spec helper opens without client-side JavaScript");
   await specsSummary.click();
-  assert.equal(await initial.locator('link[rel="canonical"]').getAttribute("href"), "https://local-llm-finder-m7qb.vercel.app", "canonical URL uses the public site URL");
-  assert.equal(await initial.locator('meta[property="og:url"]').getAttribute("content"), "https://local-llm-finder-m7qb.vercel.app", "Open Graph metadata uses the public site URL");
+  assert.equal(await initial.locator('link[rel="canonical"]').getAttribute("href"), "https://local-llm-finder.vercel.app", "canonical URL uses the public site URL");
+  assert.equal(await initial.locator('meta[property="og:url"]').getAttribute("content"), "https://local-llm-finder.vercel.app", "Open Graph metadata uses the public site URL");
   assert.equal(await initial.locator('meta[name="twitter:card"]').getAttribute("content"), "summary_large_image", "Twitter uses a large image card");
   assert.ok(await initial.locator('meta[property="og:image"]').count(), "Open Graph image metadata is present");
   assert.ok(await initial.locator('link[rel="icon"][href*="/icon"]').count(), "generated app icon metadata is present");

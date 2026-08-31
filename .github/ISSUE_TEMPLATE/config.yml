@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security or privacy vulnerability
+    url: https://github.com/KishanPipariya/local-llm-finder/security/advisories/new
+    about: Report vulnerabilities privately instead of opening a public issue.

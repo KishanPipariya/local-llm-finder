@@ -2,6 +2,10 @@
 
 Small, focused pull requests are welcome. Open an issue before proposing a new
 data source, runtime, hardware family, dependency, or product integration.
+By participating, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+Use the repository's issue forms for bugs and feature requests. Report security
+or privacy vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 ## Development
 

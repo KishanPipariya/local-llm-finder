@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest a focused improvement to the finder.
+title: "Feature: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please open an issue before proposing a new data source, runtime, hardware family, dependency, or product integration.
+  - type: textarea
+    id: need
+    attributes:
+      label: What need would this address?
+      description: Explain the user problem rather than only the proposed solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed improvement
+      description: Describe how you think the finder could address the need.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Note any workarounds or different approaches you considered.

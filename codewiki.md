@@ -510,7 +510,7 @@ printing submitted configurations.
 
 ## Sharing and showcase assets
 
-Root metadata uses `https://local-llm-finder-m7qb.vercel.app/` as its canonical
+Root metadata uses `https://local-llm-finder.vercel.app/` as its canonical
 and Open Graph URL and declares a large-image Twitter card. Next serves the
 branded, code-generated `/opengraph-image` and `/icon` metadata routes using
 the same cream, navy, and blue visual language as the finder. The README's
