@@ -20,13 +20,13 @@ Complete these operator and legal decisions before announcing a production URL.
 - [x] Publish the source under the MIT License.
 - [x] Add structured bug and feature request forms plus a contributor code of
   conduct.
-- [ ] Add a concise GitHub repository description and relevant topics, and set
+- [x] Add a concise GitHub repository description and relevant topics, and set
   the homepage to `https://local-llm-finder.vercel.app`.
-- [ ] Protect `main` with a ruleset that requires the Verify workflow, and
+- [x] Protect `main` with a ruleset that requires the Verify workflow, and
   enable secret scanning and push protection where available.
 - [ ] Complete `docs/accessibility-release-checklist.md` with VoiceOver, NVDA,
   zoom, text-spacing, reduced-motion, and contrast checks.
-- [ ] Run `npm run verify`, deploy, warm the catalogue, and run
+- [x] Run `npm run verify`, deploy, warm the catalogue, and run
   `npm run monitor:deploy`.
 
 See `docs/platform-release-settings.md` for the exact Vercel, GitHub, and

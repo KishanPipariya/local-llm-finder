@@ -1,5 +1,7 @@
 # Mac Local LLM Finder
 
+[![Verify](https://github.com/KishanPipariya/local-llm-finder/actions/workflows/verify.yml/badge.svg)](https://github.com/KishanPipariya/local-llm-finder/actions/workflows/verify.yml)
+
 [Try the live app](https://local-llm-finder.vercel.app/) to find current
 chat and coding models that fit your Apple Silicon Mac.
 
