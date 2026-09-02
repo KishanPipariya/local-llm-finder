@@ -463,9 +463,11 @@ the repository verification gate: it runs on pull requests and pushes to
 GitHub-authored actions, Node 24 with npm caching, and executes a
 production-dependency audit, linting, the standalone type check, coverage-gated
 unit tests, the production build (as part of the accessibility suite), and the
-Playwright/axe checks. A 20-minute job timeout bounds stuck runs, and a newer run
-for the same pull request or branch cancels its superseded predecessor. Husky
-remains local feedback; Git hooks can
+Playwright/axe checks. CI launches the Chrome channel already installed on the
+Ubuntu runner instead of downloading a duplicate Playwright browser on every
+run; local checks continue to use Playwright's managed Chromium. A 20-minute job
+timeout bounds stuck runs, and a newer run for the same pull request or branch
+cancels its superseded predecessor. Husky remains local feedback; Git hooks can
 still be bypassed, but the CI checks cannot be bypassed through `--no-verify`.
 
 `npm test` includes
