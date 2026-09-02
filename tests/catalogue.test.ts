@@ -452,7 +452,7 @@ test("GGUF normalization caps repository variants before ranking", () => {
   assert.deepEqual(normalizationExclusions([unsupportedCrowd], "gguf"), { unsupportedArtifact: 100 });
 });
 
-function upstream(options: { unavailableModel?: string } = {}) {
+function upstream(options: { unavailableModel?: string } = {}): (url: string, init?: RequestInit) => Promise<Response> {
   return async (url: string) => {
     if (url.includes("?full=true")) return Response.json(url.includes("author=mlx-community") ? [listedMlxModel] : [listedModel]);
     if (url.includes("?blobs=true")) {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:net";
 import test from "node:test";
@@ -34,7 +34,7 @@ async function waitForExit(exit: Promise<unknown>, timeoutMs: number) {
   }
 }
 
-async function stopServer(server: ChildProcessWithoutNullStreams) {
+async function stopServer(server: ChildProcess) {
   if (server.exitCode !== null) return;
   // Register before signalling so a fast exit cannot be missed between kill()
   // and listener attachment.

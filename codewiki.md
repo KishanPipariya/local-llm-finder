@@ -117,7 +117,12 @@ and long links and disclosure summaries wrap rather than overflow.
 | `docs/public-release-checklist.md` | Operator, legal, privacy, abuse-protection, monitoring, and final release decisions. |
 | `docs/platform-release-settings.md` | Exact Vercel logging and WAF review, GitHub private-reporting, and monitor-notification steps. |
 | `docs/images/recommended-results.png` | Checked-in fixture-backed screenshot used in the README. |
+| `CONTRIBUTING.md` | Contributor setup, focused-test routing, project contracts, and troubleshooting. |
 | `LICENSE` | MIT terms for using, modifying, and distributing the source. |
+| `.editorconfig` | Shared UTF-8, LF, two-space, and trailing-whitespace editor defaults. |
+| `.github/ISSUE_TEMPLATE/` | Structured bug and feature intake with privacy and security routing. |
+| `.github/pull_request_template.md` | Review-ready change summary, evidence, and verification checklist. |
+| `.husky/` | Version-controlled lint-on-commit and pre-push verification hooks. |
 | `mise.toml` | Node 24 version-management configuration. |
 | `.nvmrc` | Node 24 configuration for nvm. |
 | `scripts/check-node-version.mjs` | Enforces Node 24 for release checks. |
@@ -431,28 +436,34 @@ cannot keep the validation response pending beyond the body-read deadline.
 Requires Node.js 24.x and npm.
 
 ```bash
-npm install
+npm ci
+npm run setup:browsers
 npm run dev
+npm run typecheck
+npm run test:unit:watch
 npm test
 npm run lint
 npm run build
 npm run verify
 ```
 
-`npm install` runs `scripts/prepare.mjs`, which configures Git to use the
+`npm ci` runs `scripts/prepare.mjs`, which configures Git to use the
 version-controlled Husky hooks in `.husky/` when the development dependency is
-installed and exits cleanly for production-only installs. Both hooks explicitly use
-`mise exec node@24` so they do not inherit an incompatible shell Node version.
+installed and exits cleanly for production-only installs. Hooks use the
+project's `mise` configuration when `mise` is available and otherwise use the
+active Node installation. Contributors can therefore use `.nvmrc`, `mise.toml`,
+or another Node manager; the npm checks provide the Node 24 version guard.
 `pre-commit` runs linting. `pre-push` runs `npm run verify:prepush` (lint,
-unit tests, and a production build); the longer Playwright/axe suite remains in
-`npm test` and the full `npm run verify` release check. The individual commands
-remain available, and Git's standard `--no-verify` option can bypass a hook
-when explicitly needed. GitHub Actions is the repository verification gate: it
-runs on pull requests and pushes to `main`, using the pinned Ubuntu 24.04 runner,
-immutable release commits for its GitHub-authored actions, Node 24 with npm caching, and
-executes a production-dependency audit, linting, coverage-gated unit tests, the
-production build (as part of the accessibility suite), and the Playwright/axe
-checks. Husky remains local feedback; Git hooks can
+the standalone type check, unit tests, and a production build); the longer
+Playwright/axe suite remains in `npm test` and the full `npm run verify` release
+check. The individual commands remain available, and Git's standard
+`--no-verify` option can bypass a hook when explicitly needed. GitHub Actions is
+the repository verification gate: it runs on pull requests and pushes to
+`main`, using the pinned Ubuntu 24.04 runner, immutable release commits for its
+GitHub-authored actions, Node 24 with npm caching, and executes a
+production-dependency audit, linting, the standalone type check, coverage-gated
+unit tests, the production build (as part of the accessibility suite), and the
+Playwright/axe checks. Husky remains local feedback; Git hooks can
 still be bypassed, but the CI checks cannot be bypassed through `--no-verify`.
 
 `npm test` includes
@@ -480,8 +491,12 @@ the command. Consequently, `npm run test:unit`,
 this coverage report. Browser-rendered pages and components are outside this
 unit-coverage scope.
 
-Use Node 24.x (`.nvmrc` is provided). The toolchain uses ESLint 9.39.1,
-`eslint-config-next` 16.3.0, `tsx` 4.23.9, and TypeScript 7.0.2. TypeScript
+Use Node 24.x (`.nvmrc` and `mise.toml` are provided). Run
+`npm run setup:browsers` once after installation, and again when Playwright's
+Chromium version changes. `npm run typecheck` exposes the standalone TypeScript
+6 compatibility check used by Next, while `npm run test:unit:watch` provides a
+fast unit-test feedback loop. The toolchain uses ESLint 10.9.1,
+`eslint-config-next` 16.3.3, `tsx` 4.23.12, and TypeScript 7.0.2. TypeScript
 7 currently has no compiler API, so its official `@typescript/native` package
 supplies `tsc` while the `typescript` dependency aliases the TypeScript 6
 compatibility API required by Next and typescript-eslint. ESLint's official
@@ -489,9 +504,8 @@ compatibility adapter keeps Next's configured rules working in flat config.
 
 When changing visible finder UI, also follow
 [`docs/accessibility-release-checklist.md`](docs/accessibility-release-checklist.md).
-Use `mise.toml` as an additional Node 24 version-management configuration.
-
-`npm test`, `npm run lint`, and `npm run build` begin by enforcing Node 24.
+`npm run dev`, `npm start`, `npm run typecheck`, `npm test`, `npm run lint`,
+and `npm run build` enforce Node 24 before doing work.
 For an invited-demo deployment, run `npm run smoke:deploy -- <deployment-url>`
 after warming the cache. It performs one valid server-rendered GET and API
 requests for Ollama, LM Studio, llama.cpp, and MLX; it reports stale catalogue
