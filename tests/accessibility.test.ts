@@ -20,6 +20,7 @@ async function allocatePort() {
 
 const fetchMockImport = pathToFileURL("tests/browser-catalogue-fetch-mock.mjs").href;
 const serverStopTimeoutMs = 5_000;
+const browserChannel = process.env.PLAYWRIGHT_BROWSER_CHANNEL === "chrome" ? "chrome" : undefined;
 let origin = "";
 
 async function waitForExit(exit: Promise<unknown>, timeoutMs: number) {
@@ -138,7 +139,7 @@ const server = started.server;
 let browser: Browser | undefined;
 
 try {
-  browser = await chromium.launch();
+  browser = await chromium.launch({ channel: browserChannel });
   await test("initial finder and hardware interactions are accessible", async () => {
     const context = await browser!.newContext();
     try {
