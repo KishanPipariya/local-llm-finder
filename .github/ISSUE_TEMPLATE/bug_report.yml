@@ -15,6 +15,20 @@ body:
       description: Describe the problem and what you expected instead.
     validations:
       required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Finder UI
+        - Recommendations or fit estimates
+        - Catalogue retrieval
+        - JSON API
+        - Accessibility
+        - Documentation or tooling
+        - Other
+    validations:
+      required: true
   - type: textarea
     id: steps
     attributes:
@@ -38,3 +52,12 @@ body:
     attributes:
       label: Additional context
       description: Add screenshots or other non-sensitive details if useful.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and did not find the same problem.
+          required: true
+        - label: I removed private information and sensitive configuration URLs.
+          required: true

@@ -1,3 +1,7 @@
 #!/bin/sh
 
-mise exec node@24 -- npm run lint
+if command -v mise >/dev/null 2>&1; then
+  exec mise exec node@24 -- npm run lint
+fi
+
+exec npm run lint

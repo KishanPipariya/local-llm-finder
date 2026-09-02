@@ -15,6 +15,19 @@ body:
       description: Explain the user problem rather than only the proposed solution.
     validations:
       required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Finder experience
+        - Model or runtime support
+        - Recommendation explanations
+        - Accessibility
+        - Documentation or tooling
+        - Other
+    validations:
+      required: true
   - type: textarea
     id: proposal
     attributes:
@@ -27,3 +40,10 @@ body:
     attributes:
       label: Alternatives considered
       description: Note any workarounds or different approaches you considered.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and did not find the same request.
+          required: true

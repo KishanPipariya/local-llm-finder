@@ -35,7 +35,7 @@ results as stale.
 You need [Node.js 24](https://nodejs.org/) and npm.
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
@@ -63,6 +63,9 @@ cached result returns `503`. This is a same-origin app endpoint, not a versioned
 public API.
 
 ## Development and deployment
+
+New contributors should start with the [contributing guide](CONTRIBUTING.md),
+which covers browser-test setup, focused checks, and the project contracts.
 
 Run all release checks with:
 
