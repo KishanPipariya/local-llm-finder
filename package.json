@@ -29,7 +29,7 @@
     "prepare": "node ./scripts/prepare.mjs"
   },
   "dependencies": {
-    "next": "^16.3.3",
+    "next": "^16.3.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
@@ -41,7 +41,7 @@
     "@types/react-dom": "19.2.5",
     "@typescript/native": "npm:typescript@7.0.2",
     "eslint": "10.9.1",
-    "eslint-config-next": "16.3.3",
+    "eslint-config-next": "16.3.4",
     "husky": "^9.1.7",
     "playwright": "^1.62.1",
     "tsx": "4.23.12",
